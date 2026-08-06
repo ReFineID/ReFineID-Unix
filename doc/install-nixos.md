@@ -4,6 +4,36 @@ Everything below builds ReFineID from this source tree. Nix fetches
 every build dependency (Rust toolchain, pcsc-lite, fontconfig, GUI
 libraries) by itself; nothing needs to be installed by hand first.
 
+## Fresh machine, shortest path
+
+Add to `/etc/nixos/configuration.nix`:
+
+```nix
+  imports = [
+    ./hardware-configuration.nix
+    ((builtins.getFlake "github:ReFineID/ReFineID-Unix").nixosModules.default)
+  ];
+  programs.refineid.enable = true;
+  programs.firefox.enable = true;   # for browser card login
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+```
+
+then run:
+
+```sh
+sudo NIX_CONFIG="experimental-features = nix-command flakes" nixos-rebuild switch
+```
+
+The `NIX_CONFIG` prefix is needed only on the first rebuild: `getFlake`
+requires flakes, and the config line enabling them has not taken
+effect yet. One rebuild later the system has the `refineid` CLI, the
+Card Manager (application menu entry included), pcscd with the CCID
+driver, the PKCS#11 module registered for p11-kit consumers, and
+Firefox card login. Plug in a reader and run `refineid card`.
+
+The sections below unpack the same install for existing
+configurations, flake-based systems, and development.
+
 Two paths: the **system-wide install** (recommended -- one option
 enables the CLI, the GUI, the smart-card daemon, and Firefox
 integration) and the **one-off build** (try it without touching the
