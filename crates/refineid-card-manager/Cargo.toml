@@ -1,0 +1,25 @@
+[package]
+name = "refineid-card-manager"
+description = "Portable ReFineID desktop card-management application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+refineid-client = { path = "../refineid-client", version = "26" }
+refineid-lib-core.workspace = true
+slint = { version = "1.17", default-features = false, features = ["accessibility", "backend-winit", "compat-1-2", "renderer-femtovg"] }
+arboard = "3.6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+pdfluent-jpeg2000 = { version = "0.3", default-features = false, features = ["image", "std"] }
+rfd = "0.17"
+
+[build-dependencies]
+slint-build = "1.17"

@@ -1,0 +1,187 @@
+# Installing ReFineID on NixOS
+
+Everything below builds ReFineID from this source tree. Nix fetches
+every build dependency (Rust toolchain, pcsc-lite, fontconfig, GUI
+libraries) by itself; nothing needs to be installed by hand first.
+
+Two paths: the **system-wide install** (recommended -- one option
+enables the CLI, the GUI, the smart-card daemon, and Firefox
+integration) and the **one-off build** (try it without touching the
+system configuration).
+
+## 1. System-wide install (recommended)
+
+Works on any NixOS 26.05 or newer with flakes enabled. Flakes are on
+by default on recent installs; if not, add to
+`/etc/nixos/configuration.nix`:
+
+```nix
+nix.settings.experimental-features = [ "nix-command" "flakes" ];
+```
+
+### 1a. Flake-based system configuration
+
+Add the input and the module to your system flake:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    refineid.url = "github:ReFineID/ReFineID-Unix";
+  };
+
+  outputs = { nixpkgs, refineid, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      modules = [
+        ./configuration.nix
+        refineid.nixosModules.default
+        { programs.refineid.enable = true; }
+      ];
+    };
+  };
+}
+```
+
+Then rebuild:
+
+```sh
+sudo nixos-rebuild switch --flake /etc/nixos#myhost
+```
+
+### 1b. Classic (non-flake) system configuration
+
+In `/etc/nixos/configuration.nix`:
+
+```nix
+{ config, pkgs, ... }:
+let
+  refineid-src = builtins.fetchTarball
+    "https://github.com/ReFineID/ReFineID-Unix/archive/main.tar.gz";
+in
+{
+  imports = [
+    ((builtins.getFlake "path:${refineid-src}").nixosModules.default)
+  ];
+  programs.refineid.enable = true;
+}
+```
+
+(Or clone the repository and use its path in place of the
+`fetchTarball`.) Then:
+
+```sh
+sudo nixos-rebuild switch
+```
+
+### What the option does
+
+`programs.refineid.enable = true` gives you:
+
+- `refineid` and `refineid-card-manager` in the system PATH, plus a
+  Card Manager entry in the application launcher;
+- `services.pcscd` running with the CCID reader driver -- no separate
+  smart-card setup;
+- the PKCS#11 module registered system-wide for p11-kit consumers
+  (OpenSSL via pkcs11-provider, GnuTLS, OpenSSH) through
+  `/etc/pkcs11/modules/refineid.module`;
+- Firefox card login configured automatically through the
+  `SecurityDevices` enterprise policy **when Firefox is enabled with
+  `programs.firefox.enable = true`**. Insert the card, open a
+  card-login service, pick the certificate, enter PIN 1. Set
+  `programs.refineid.firefoxIntegration = false` to opt out.
+
+### Firefox installed some other way
+
+A Firefox that does not come from `programs.firefox.enable` (home
+manager without policies, a tarball install) needs one manual,
+per-profile registration:
+
+1. Settings > Privacy & Security > Security Devices > Load.
+2. Module name: `ReFineID`.
+3. Module filename: the store path printed by
+   `readlink -f $(which refineid) | sed 's,/bin/refineid,/lib/librefineid_pkcs11.so,'`
+
+or from a shell:
+
+```sh
+modutil -dbdir sql:$HOME/.mozilla/firefox/<profile> \
+        -add ReFineID \
+        -libfile "$(nix build github:ReFineID/ReFineID-Unix --print-out-paths --no-link)/lib/librefineid_pkcs11.so"
+```
+
+## 2. One-off build (no system changes)
+
+With flakes:
+
+```sh
+nix build github:ReFineID/ReFineID-Unix
+./result/bin/refineid card          # full card readout
+./result/bin/refineid-card-manager  # the GUI
+```
+
+From a clone, without flakes:
+
+```sh
+git clone https://github.com/ReFineID/ReFineID-Unix.git
+cd ReFineID-Unix
+nix-build
+./result/bin/refineid card
+```
+
+Note: without the system module, pcscd must be running for any card
+access -- enable `services.pcscd.enable = true;` in
+`configuration.nix` (there is no reliable ad-hoc way to run pcscd on
+NixOS).
+
+## 3. Development shell
+
+For hacking on the source:
+
+```sh
+nix develop        # flakes; or: nix-shell
+cargo build --workspace
+cargo test --workspace
+cargo run -p refineid-client --bin refineid -- card
+cargo run -p refineid-card-manager
+```
+
+The shell provides the toolchain, `pcsc_scan` (reader debugging) and
+`pkcs11-tool` (module debugging), and sets `LD_LIBRARY_PATH` so a
+`cargo run` of the GUI finds the graphics stack.
+
+## 4. Verifying the install
+
+Reader and card visible:
+
+```sh
+pcsc_scan                # should show your reader, and the card when inserted
+refineid card            # full readout: identity, certs, PIN counters
+```
+
+PKCS#11 module answers:
+
+```sh
+pkcs11-tool --module /run/current-system/sw/lib/librefineid_pkcs11.so -L
+p11-kit list-modules     # shows refineid when the p11-kit config is active
+```
+
+Firefox: with the card inserted, Settings > Privacy & Security >
+Security Devices should list `ReFineID` with your reader under it,
+and a card-login site will prompt for the certificate and PIN 1.
+
+## Troubleshooting
+
+- **`refineid card` reports no readers.** pcscd is not running
+  (`systemctl status pcscd.socket`) or the reader is not attached.
+  In a virtual machine, pass the USB reader through to the guest.
+- **Firefox shows no certificate prompt.** Check the module is listed
+  under Security Devices; a fresh profile enumerates token
+  certificates only after the module is registered and the card was
+  present when the dialog opened.
+- **GUI fails to start with a GL/wayland error.** Run it from the
+  installed package (which carries the needed rpath), not by copying
+  the bare binary; inside `nix develop`, `LD_LIBRARY_PATH` is already
+  set.
+- **HTTPS timestamp fetches fail with `no CA bundle found`.** Set
+  `REFINEID_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt` (present
+  when `security.pki` is at its NixOS defaults).
