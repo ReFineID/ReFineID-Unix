@@ -32,6 +32,7 @@
             rustfmt
             pcsc-tools # pcsc_scan for reader debugging
             opensc # pkcs11-tool for module debugging
+            nss.tools # tstclnt/certutil/modutil for the hardware cert-auth rig
           ];
           # The GUI dlopens the windowing/GL stack; a dev build has no
           # baked rpath, so provide the libraries via the environment.

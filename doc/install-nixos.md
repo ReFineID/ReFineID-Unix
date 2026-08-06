@@ -145,9 +145,35 @@ cargo run -p refineid-client --bin refineid -- card
 cargo run -p refineid-card-manager
 ```
 
-The shell provides the toolchain, `pcsc_scan` (reader debugging) and
-`pkcs11-tool` (module debugging), and sets `LD_LIBRARY_PATH` so a
-`cargo run` of the GUI finds the graphics stack.
+The shell provides the toolchain, `pcsc_scan` (reader debugging),
+`pkcs11-tool` (module debugging), and the NSS tools (`tstclnt`,
+`certutil`, `modutil`) for the hardware cert-auth rig, and sets
+`LD_LIBRARY_PATH` so a `cargo run` of the GUI finds the graphics
+stack.
+
+### Hardware login test (opt-in)
+
+With a card in the reader and a TLS endpoint that requires a client
+certificate, the rig in `crates/refineid-pkcs11/test/` verifies the
+full Firefox login path (NSS -> PKCS#11 module -> card PIN -> TLS
+`CertificateVerify`) without a browser:
+
+```sh
+nix develop        # or: nix-shell
+REFINEID_HARDWARE_TEST=1 \
+REFINEID_TEST_PIN1=<PIN1> \
+HOST=<cert-gated host> REQUEST_PATH=<cert-gated path> \
+NSSCKBI="$(nix-build '<nixpkgs>' -A nss --no-out-link)/lib/libnssckbi.so" \
+REFINEID_CANONICAL_DYLIB=$PWD/target/release/librefineid_pkcs11.so \
+crates/refineid-pkcs11/test/headless-cert-auth.sh
+```
+
+Build the module first (`cargo build --release -p refineid-pkcs11`),
+or point `REFINEID_CANONICAL_DYLIB` at the installed
+`/run/current-system/sw/lib/librefineid_pkcs11.so`. A wrong PIN
+consumes a card retry, so double-check `REFINEID_TEST_PIN1` before
+running; the module refuses further attempts when the counter runs
+low.
 
 ## 4. Verifying the install
 

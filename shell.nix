@@ -10,6 +10,7 @@ pkgs.mkShell {
     rustfmt
     pcsc-tools # pcsc_scan for reader debugging
     opensc # pkcs11-tool for module debugging
+    nss.tools # tstclnt/certutil/modutil for the hardware cert-auth rig
   ];
   LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (
     with pkgs;

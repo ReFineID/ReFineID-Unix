@@ -53,6 +53,9 @@
 #   NICKNAME                   NSS nickname for the imported cert;
 #                              default ReFineID-FINEID-auth.
 #   WORKDIR                    default: mktemp -d
+#   NSSCKBI                    path to libnssckbi (builtin CA
+#                              roots); overrides discovery.
+#                              Required on NixOS.
 #
 # ## Exit codes
 #
@@ -89,12 +92,15 @@ case "$(uname -s)" in
     exit 2
     ;;
 esac
-NSSCKBI=""
-for c in $NSSCKBI_CANDIDATES; do
-  [ -f "$c" ] && NSSCKBI="$c" && break
-done
-[ -n "$NSSCKBI" ] || {
-  echo "nssckbi (builtin CA roots) not found -- looked at: $NSSCKBI_CANDIDATES" >&2
+# NSSCKBI overrides discovery: required on NixOS, where library
+# paths are per-package (e.g. "$(nix-build '<nixpkgs>' -A nss --no-out-link)/lib/libnssckbi.so").
+if [ -z "${NSSCKBI:-}" ]; then
+  for c in $NSSCKBI_CANDIDATES; do
+    [ -f "$c" ] && NSSCKBI="$c" && break
+  done
+fi
+[ -n "${NSSCKBI:-}" ] && [ -f "$NSSCKBI" ] || {
+  echo "nssckbi (builtin CA roots) not found -- set NSSCKBI=<path to libnssckbi.$LIBEXT>; looked at: $NSSCKBI_CANDIDATES" >&2
   exit 2
 }
 
@@ -126,7 +132,16 @@ mkdir -p "$WORK"
 AUTH_CERT="$WORK/auth-cert.der"
 if [ ! -s "$AUTH_CERT" ]; then
   echo "[setup] extracting FINEID auth cert from card"
-  pkcs11-tool --module "$CANONICAL" --type cert --read-object -o "$AUTH_CERT" >/dev/null 2>&1 || {
+  # The module exposes exactly one certificate, but opensc >= 0.27
+  # refuses --read-object without an identifier, so discover the
+  # CKA_ID first.
+  CERT_ID="$(pkcs11-tool --module "$CANONICAL" --list-objects --type cert 2>/dev/null \
+    | sed -n 's/^ *ID: *//p' | head -1 | tr -d ':')"
+  [ -n "$CERT_ID" ] || {
+    echo "[setup] no certificate object found (card present? pcscd running?)" >&2
+    exit 2
+  }
+  pkcs11-tool --module "$CANONICAL" --type cert --id "$CERT_ID" --read-object -o "$AUTH_CERT" >/dev/null 2>&1 || {
     echo "[setup] auth cert extract failed (card present? pcscd running?)" >&2
     exit 2
   }
