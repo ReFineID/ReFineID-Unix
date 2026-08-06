@@ -13,11 +13,15 @@ things:
 - **`librefineid_pkcs11.so`** -- PKCS#11 v2.40 module (read-only,
   sign-only) for Firefox/NSS card login, and for OpenSSL / GnuTLS /
   OpenSSH through p11-kit.
-- **`refineid-card-manager`** -- desktop GUI (Slint) for PIN
-  activation, PIN change, PUK unblock, and viewing the card's portrait
-  and signature images.
+- **`refineid-gui`** -- desktop GUI (Slint): PIN activation, PIN
+  change, PUK unblock, viewing the card's portrait and signature
+  images, and PDF document signing.
 
-Project stage: alpha. The macOS/iPadOS app lives in
+Project stage: beta. The CLI, the PKCS#11 Firefox/NSS card login, and
+the reproducible NixOS install are proven against real FINEID
+hardware; breadth of card-model coverage is still growing, and
+PIN-change stays off by default until validated on a 2026 ECC card.
+The macOS/iPadOS app lives in
 [ReFineID-Apple](https://github.com/ReFineID/ReFineID-Apple).
 
 ## Install
@@ -48,13 +52,13 @@ Settings > Privacy & Security > Security Devices.
 | [refineid-lib-tls](crates/refineid-lib-tls/) | Server-authenticated HTTPS client (rustls) for timestamp authorities and EU trusted lists. |
 | [refineid-client](crates/refineid-client/) | Client library and the `refineid` CLI. |
 | [refineid-pkcs11](crates/refineid-pkcs11/) | PKCS#11 v2.40 cdylib for Firefox/NSS card login. |
-| [refineid-card-manager](crates/refineid-card-manager/) | Desktop card-management GUI (Slint). |
+| [refineid-gui](crates/refineid-gui/) | Desktop GUI (Slint): PIN management, portrait/signature, document signing. |
 
 ## Maintainer
 
-Petri Koistinen. Issues and discussion:
+Petri Koistinen <petri.koistinen@refineid.fi>. Issues and discussion:
 <https://github.com/ReFineID/ReFineID-Unix>.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache-2.0. See [LICENSE](LICENSE).

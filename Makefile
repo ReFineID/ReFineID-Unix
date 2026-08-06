@@ -19,7 +19,7 @@ build:
 	@echo ""
 	@echo "built:"
 	@echo "  target/release/refineid                 (CLI)"
-	@echo "  target/release/refineid-card-manager    (GUI)"
+	@echo "  target/release/refineid-gui             (GUI)"
 	@echo "  target/release/librefineid_pkcs11.so    (Firefox/NSS card login)"
 
 check:
