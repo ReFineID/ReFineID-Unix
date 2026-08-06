@@ -50,8 +50,12 @@ Show feedback only when it helps the user act:
 
 ## Card status monitoring
 
-- Open the window immediately. Full card inspection, including the initial
-  inspection and the 15-second refresh, runs outside Slint's UI thread.
+- Open the window immediately. Full card inspection runs outside Slint's
+  UI thread.
+- No timed polling. A background monitor parks in `SCardGetStatusChange`
+  and requests one inspection per card insertion/removal or reader
+  arrival. Peer activity that does not change presence (a browser
+  holding the card for a TLS signature) never triggers card traffic.
 - Never overlap full inspections. Buttons remain disabled while an inspection
   is in flight, and completed reports are applied on the UI event loop.
 

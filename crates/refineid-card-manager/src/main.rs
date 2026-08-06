@@ -44,9 +44,17 @@ use refineid_lib_core::pkcs15::CardGeneration;
 use refineid_lib_core::sign::pades::SignatureInk;
 use slint::{ComponentHandle as _, Image, Rgba8Pixel, SharedPixelBuffer};
 
-/// Full PC/SC card inspection interval. Inspection runs off Slint's UI thread,
-/// but remains deliberately infrequent to avoid needless reader traffic.
-const CARD_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(15);
+/// How long one blocking presence wait parks before re-arming. The
+/// monitor wakes on card insertion/removal and reader arrival, not on
+/// a schedule; this bound only lets the loop notice a torn-down PC/SC
+/// service. Idle steady-state performs no card opens at all.
+const CARD_PRESENCE_WAIT: Duration = Duration::from_secs(30);
+/// Grace period between a detected presence change and the full
+/// inspection, so a just-inserted card finishes powering up.
+const CARD_PRESENCE_SETTLE: Duration = Duration::from_millis(300);
+/// Backoff after a presence-monitor error (PC/SC service restart)
+/// before retrying, so a dead service is not spun on.
+const CARD_PRESENCE_ERROR_BACKOFF: Duration = Duration::from_secs(5);
 /// Short event-loop tick used only to collect completed background card reads.
 const CARD_INSPECTION_RESULT_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -1074,7 +1082,6 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     let selected_reader = Rc::new(RefCell::new(None::<String>));
     let displayed_serial = Rc::new(RefCell::new(None::<TokenSerial>));
-    let presence_timer = slint::Timer::default();
     let inspection_result_timer = slint::Timer::default();
     let pdf_sign_result_timer = slint::Timer::default();
     let (inspection_sender, inspection_receiver) = mpsc::channel::<CardInspectionResult>();
@@ -1342,22 +1349,39 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     {
+        // Event-driven presence monitor: parks in SCardGetStatusChange
+        // and requests one full inspection per card insertion/removal
+        // or reader arrival. No timed polling -- a peer holding the
+        // card (Firefox mid-handshake) is never disturbed, and an idle
+        // application performs no card traffic at all.
         let weak = window.as_weak();
         let inspection_sender = inspection_sender.clone();
         let inspection_in_flight = Arc::clone(&inspection_in_flight);
-        presence_timer.start(
-            slint::TimerMode::Repeated,
-            CARD_STATUS_POLL_INTERVAL,
-            move || {
-                let Some(window) = weak.upgrade() else {
-                    return;
-                };
-                if window.get_busy() {
-                    return;
+        thread::spawn(move || {
+            let mut baseline = refineid_lib_pcsc::presence_signature().unwrap_or_default();
+            loop {
+                match refineid_lib_pcsc::wait_for_presence_change(&baseline, CARD_PRESENCE_WAIT) {
+                    Ok(true) => {
+                        thread::sleep(CARD_PRESENCE_SETTLE);
+                        baseline = refineid_lib_pcsc::presence_signature().unwrap_or(baseline);
+                        let sender = inspection_sender.clone();
+                        let in_flight = Arc::clone(&inspection_in_flight);
+                        let dispatched = weak.upgrade_in_event_loop(move |window| {
+                            if !window.get_busy() {
+                                request_card_inspection(&window, &sender, &in_flight);
+                            }
+                        });
+                        if dispatched.is_err() {
+                            // Event loop gone: the application is
+                            // shutting down.
+                            break;
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(_service_down) => thread::sleep(CARD_PRESENCE_ERROR_BACKOFF),
                 }
-                request_card_inspection(&window, &inspection_sender, &inspection_in_flight);
-            },
-        );
+            }
+        });
     }
 
     {
@@ -1813,7 +1837,7 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CARD_STATUS_POLL_INTERVAL, legacy_activation_required, normalized_puk_input, optional_can,
+        CARD_PRESENCE_WAIT, legacy_activation_required, normalized_puk_input, optional_can,
         pin_change_available, puk_status, recovery_availability, refine_recovery_submission,
         secret, signed_pdf_file_name, timestamp_authority_url, timestamp_credentials,
         validate_gui_pin, validate_gui_pin_format, validate_gui_puk, validate_replacement_pin,
@@ -1822,8 +1846,11 @@ mod tests {
     use refineid_lib_core::auth::{PinStatus, PukStatus};
 
     #[test]
-    fn card_status_poll_does_not_saturate_the_ui_thread() {
-        assert_eq!(CARD_STATUS_POLL_INTERVAL.as_secs(), 15);
+    fn presence_wait_parks_long_enough_to_be_event_driven() {
+        // The monitor is woken by SCardGetStatusChange events, not by
+        // this bound expiring; a short bound would degenerate back
+        // into polling.
+        assert!(CARD_PRESENCE_WAIT.as_secs() >= 30);
     }
 
     #[test]

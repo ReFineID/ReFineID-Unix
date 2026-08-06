@@ -754,6 +754,75 @@ impl ReaderBackend for PcscBackend {
     }
 }
 
+// ----- Presence monitoring -----
+
+/// Reader names paired with card-present flags, as sampled by
+/// [`presence_signature`]. Two signatures compare equal exactly when
+/// the same readers are attached and the same slots hold a card.
+pub type PresenceSignature = Vec<(String, bool)>;
+
+/// Sample the current reader / card-presence signature.
+///
+/// Uses `SCardGetStatusChange` presence probes only -- no card is
+/// ever opened, so sampling cannot disturb a peer mid-operation
+/// (a TLS handshake signing on the card, a PACE session).
+///
+/// # Errors
+/// PC/SC service unavailable or platform-level failure.
+pub fn presence_signature() -> Result<PresenceSignature, PcscError> {
+    use refineid_lib_core::backend::ReaderBackend as _;
+    Ok(PcscBackend
+        .enumerate()?
+        .into_iter()
+        .map(|info| (info.id.as_str().to_owned(), info.card_present))
+        .collect())
+}
+
+/// Block until the reader set or card presence differs from
+/// `baseline`, or `timeout` elapses. `Ok(true)` means the signature
+/// changed; `Ok(false)` means the wait timed out with nothing to do.
+///
+/// The wait parks inside `SCardGetStatusChange` (readers plus the
+/// `PnP` pseudo-reader, so reader arrival wakes it too) and never
+/// opens a card. Peer activity that does not change presence -- a
+/// browser holding the card for a signature -- is deliberately not
+/// a wake-up: reacting to it is how a poller disturbs the peer.
+///
+/// # Errors
+/// PC/SC service unavailable or platform-level failure.
+pub fn wait_for_presence_change(
+    baseline: &[(String, bool)],
+    timeout: core::time::Duration,
+) -> Result<bool, PcscError> {
+    if presence_signature()? != baseline {
+        return Ok(true);
+    }
+    let ctx = establish_context()?;
+    let names = list_readers(&ctx)?;
+    let mut states = Vec::with_capacity(names.len().saturating_add(1));
+    states.push(ReaderState::new(pcsc::PNP_NOTIFICATION(), State::UNAWARE));
+    for name in &names {
+        let cstr = CString::new(name.as_str())
+            .map_err(|e| PcscError::Transport(format!("reader name has interior NUL: {e}")))?;
+        states.push(ReaderState::new(cstr, State::UNAWARE));
+    }
+    // Prime the current state from a zero-timeout call: UNAWARE
+    // entries otherwise report CHANGED immediately and the blocking
+    // wait would never park.
+    match ctx.get_status_change(core::time::Duration::ZERO, &mut states) {
+        Ok(()) | Err(pcsc::Error::Timeout) => {}
+        Err(e) => return Err(e.into()),
+    }
+    for state in &mut states {
+        state.sync_current_state();
+    }
+    match ctx.get_status_change(timeout, &mut states) {
+        Ok(()) => Ok(presence_signature()? != baseline),
+        Err(pcsc::Error::Timeout) => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 

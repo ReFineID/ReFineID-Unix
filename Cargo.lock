@@ -4487,6 +4487,7 @@ dependencies = [
  "pdfluent-jpeg2000",
  "refineid-client",
  "refineid-lib-core",
+ "refineid-lib-pcsc",
  "rfd",
  "slint",
  "slint-build",
