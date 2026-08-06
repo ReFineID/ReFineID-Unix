@@ -15,9 +15,9 @@
 //! Build the Slint component definitions for the Card Manager binary.
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=CARD_MANAGER_BUILD_VERSION_OVERRIDE");
-    let version = std::env::var("CARD_MANAGER_BUILD_VERSION_OVERRIDE")
+    println!("cargo:rerun-if-env-changed=REFINEID_GUI_BUILD_VERSION_OVERRIDE");
+    let version = std::env::var("REFINEID_GUI_BUILD_VERSION_OVERRIDE")
         .unwrap_or_else(|_| env!("REFINEID_VERSION").to_owned());
-    println!("cargo:rustc-env=CARD_MANAGER_BUILD_VERSION={version}");
-    slint_build::compile("ui/card-manager.slint").expect("compile Card Manager UI");
+    println!("cargo:rustc-env=REFINEID_GUI_BUILD_VERSION={version}");
+    slint_build::compile("ui/refineid-gui.slint").expect("compile ReFineID GUI");
 }

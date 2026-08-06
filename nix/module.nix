@@ -2,7 +2,7 @@
 #
 #   programs.refineid.enable = true;
 #
-# gives you the refineid CLI, the Card Manager GUI, the PKCS#11
+# gives you the refineid CLI, the ReFineID GUI, the PKCS#11
 # module registered system-wide for p11-kit consumers, the pcscd
 # smart-card daemon, and (when Firefox is managed by NixOS) automatic
 # Firefox card-login integration via the SecurityDevices policy.

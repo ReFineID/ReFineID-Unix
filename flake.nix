@@ -42,6 +42,7 @@
               libGL
               libxkbcommon
               wayland
+              gtk3
               libx11
               libxcursor
               libxi

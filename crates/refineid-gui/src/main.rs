@@ -169,7 +169,7 @@ struct PdfSigningJob {
 
 /// Start a full card inspection without blocking Slint's event loop.
 fn request_card_inspection(
-    window: &CardManagerWindow,
+    window: &RefineIdWindow,
     sender: &mpsc::Sender<CardInspectionResult>,
     inspection_in_flight: &AtomicBool,
 ) {
@@ -217,7 +217,7 @@ fn card_tab_label(card: &ManagedCard) -> String {
 }
 
 fn clear_card_data(
-    window: &CardManagerWindow,
+    window: &RefineIdWindow,
     _portrait: &RefCell<Option<UiImage>>,
     _signature: &RefCell<Option<UiImage>>,
 ) {
@@ -243,7 +243,7 @@ fn clear_card_data(
     // removal or reader uncertainty so the user can still inspect them.
 }
 
-fn disarm_pdf_signing(window: &CardManagerWindow) {
+fn disarm_pdf_signing(window: &RefineIdWindow) {
     window.set_pdf_pin2("".into());
     window.set_pdf_sign_result("".into());
 }
@@ -252,7 +252,7 @@ fn disarm_pdf_signing(window: &CardManagerWindow) {
 ///
 /// A refresh, selection, management-mode change, or view change invalidates the
 /// operator context in which every one of these values was entered.
-fn disarm_management_forms(window: &CardManagerWindow) {
+fn disarm_management_forms(window: &RefineIdWindow) {
     window.set_activation_code("".into());
     window.set_activation_pin1("".into());
     window.set_activation_pin1_confirm("".into());
@@ -275,7 +275,7 @@ fn disarm_management_forms(window: &CardManagerWindow) {
 /// This is called before the unblock callback validates or opens a card session,
 /// and whenever the displayed-card or view context changes. The local `PinBytes`
 /// moved out of the model remains available only to the in-flight callback.
-fn disarm_recovery_form(window: &CardManagerWindow) {
+fn disarm_recovery_form(window: &RefineIdWindow) {
     window.set_puk_code("".into());
     window.set_replacement_pin1("".into());
     window.set_replacement_pin1_confirm("".into());
@@ -300,7 +300,7 @@ struct RecoverySubmissionInputs {
 /// The entire recovery form is disarmed before this returns. A queued callback
 /// therefore receives empty, locally rejected inputs and cannot reach card I/O.
 fn take_recovery_submission(
-    window: &CardManagerWindow,
+    window: &RefineIdWindow,
     slot: PinManageSlot,
 ) -> RecoverySubmissionInputs {
     let puk = window.get_puk_code();
@@ -411,7 +411,7 @@ fn management_state_matches(current: &[ManagedCard], fresh: &[ManagedCard]) -> b
 }
 
 fn show_selected_card(
-    window: &CardManagerWindow,
+    window: &RefineIdWindow,
     cards: &[ManagedCard],
     selected: usize,
     displayed_serial: &RefCell<Option<TokenSerial>>,
@@ -501,7 +501,7 @@ fn show_selected_card(
 }
 
 fn show_cached_images(
-    window: &CardManagerWindow,
+    window: &RefineIdWindow,
     card: &ManagedCard,
     portrait: &RefCell<Option<UiImage>>,
     signature: &RefCell<Option<UiImage>>,
@@ -537,7 +537,7 @@ fn show_cached_images(
 }
 
 fn refresh_cards(
-    window: &CardManagerWindow,
+    window: &RefineIdWindow,
     cards_state: &RefCell<Vec<ManagedCard>>,
     selected_reader: &RefCell<Option<String>>,
     displayed_serial: &RefCell<Option<TokenSerial>>,
@@ -584,7 +584,7 @@ struct ImageStateRefs<'a> {
 }
 
 fn apply_inspected_cards(
-    window: &CardManagerWindow,
+    window: &RefineIdWindow,
     cards_state: &RefCell<Vec<ManagedCard>>,
     selected_reader: &RefCell<Option<String>>,
     displayed_serial: &RefCell<Option<TokenSerial>>,
@@ -632,7 +632,7 @@ fn apply_inspected_cards(
 
 /// Destroy all UI state that is valid only while a displayed card remains known.
 fn clear_card_context(
-    window: &CardManagerWindow,
+    window: &RefineIdWindow,
     cards_state: &RefCell<Vec<ManagedCard>>,
     selected_reader: &RefCell<Option<String>>,
     displayed_serial: &RefCell<Option<TokenSerial>>,
@@ -646,7 +646,7 @@ fn clear_card_context(
     clear_card_data(window, portrait, signature);
 }
 
-use generated_ui::CardManagerWindow;
+use generated_ui::RefineIdWindow;
 
 #[derive(Clone)]
 struct UiImage {
@@ -1000,14 +1000,8 @@ fn puk_status(status: Option<&PukStatus>) -> String {
     reason = "Slint callback registration is one ownership graph; splitting it would multiply weak handles and obscure UI state lifetimes"
 )]
 fn main() -> Result<(), slint::PlatformError> {
-    let window = CardManagerWindow::new()?;
-    window.set_window_title(
-        format!(
-            "ReFineID Card Manager {}",
-            env!("CARD_MANAGER_BUILD_VERSION")
-        )
-        .into(),
-    );
+    let window = RefineIdWindow::new()?;
+    window.set_window_title(format!("ReFineID {}", env!("REFINEID_GUI_BUILD_VERSION")).into());
     let portrait = Rc::new(RefCell::new(None::<UiImage>));
     let signature = Rc::new(RefCell::new(None::<UiImage>));
     let image_cache = Rc::new(RefCell::new(HashMap::<String, CachedImages>::new()));

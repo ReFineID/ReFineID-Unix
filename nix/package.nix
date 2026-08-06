@@ -1,4 +1,4 @@
-# ReFineID package: the refineid CLI, the Card Manager GUI, and the
+# ReFineID package: the refineid CLI, the ReFineID GUI, and the
 # PKCS#11 module, built from this source tree with the Rust that
 # nixpkgs ships.
 {
@@ -7,9 +7,11 @@
   pkg-config,
   pcsclite,
   fontconfig,
-  # Runtime graphics/windowing stack for the Slint (winit + femtovg)
-  # GUI. These are dlopened, not linked, so they go on the rpath.
-  libGL,
+  # GTK 3 backs the file-chooser dialog (rfd gtk3 backend); linked at
+  # build time.
+  gtk3,
+  # Windowing stack for the Slint (winit) GUI. The software renderer
+  # needs no GL. dlopened at runtime, so on the rpath.
   libxkbcommon,
   wayland,
   libx11,
@@ -38,11 +40,11 @@ rustPlatform.buildRustPackage {
   buildInputs = [
     pcsclite
     fontconfig
+    gtk3
   ];
 
-  # The GUI dlopens its windowing/GL stack at runtime.
+  # The GUI dlopens its windowing stack at runtime.
   runtimeLibs = lib.makeLibraryPath [
-    libGL
     libxkbcommon
     wayland
     libx11
@@ -52,7 +54,7 @@ rustPlatform.buildRustPackage {
   ];
 
   postFixup = ''
-    patchelf --add-rpath "$runtimeLibs" $out/bin/refineid-card-manager
+    patchelf --add-rpath "$runtimeLibs" $out/bin/refineid-gui
   '';
 
   postInstall = ''
@@ -73,23 +75,28 @@ rustPlatform.buildRustPackage {
     critical: no
     EOF
 
-    # Desktop entry + icon for the Card Manager.
+    # Desktop entry + icon for the GUI. The visible name is "ReFineID";
+    # the binary is refineid-gui so it does not collide with the
+    # `refineid` CLI on PATH.
     mkdir -p $out/share/applications $out/share/icons/hicolor/scalable/apps
-    cp crates/refineid-card-manager/assets/app-icon.svg \
-      $out/share/icons/hicolor/scalable/apps/refineid-card-manager.svg
-    cat > $out/share/applications/refineid-card-manager.desktop <<EOF
+    cp crates/refineid-gui/assets/app-icon.svg \
+      $out/share/icons/hicolor/scalable/apps/refineid.svg
+    cat > $out/share/applications/refineid.desktop <<EOF
     [Desktop Entry]
     Type=Application
-    Name=ReFineID Card Manager
-    Comment=Manage Finnish identity card PINs, portrait and signature
-    Exec=$out/bin/refineid-card-manager
-    Icon=refineid-card-manager
+    Name=ReFineID
+    GenericName=Identity card tool
+    Comment=Finnish identity card: PIN management, portrait and signature, document signing
+    Exec=$out/bin/refineid-gui
+    Icon=refineid
+    Terminal=false
     Categories=Utility;Security;
+    Keywords=FINEID;smartcard;PIN;identity;signing;
     EOF
   '';
 
   meta = {
-    description = "Open-source FINEID middleware: CLI, PKCS#11 module, and card-manager GUI";
+    description = "Open-source FINEID middleware: CLI, PKCS#11 module, and desktop GUI";
     homepage = "https://github.com/ReFineID/ReFineID-Unix";
     license = lib.licenses.asl20;
     platforms = lib.platforms.linux;

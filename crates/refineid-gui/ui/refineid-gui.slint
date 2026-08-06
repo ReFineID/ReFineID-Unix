@@ -7,8 +7,8 @@ import {
     VerticalBox,
 } from "std-widgets.slint";
 
-export component CardManagerWindow inherits Window {
-    in-out property <string> window-title: "ReFineID Card Manager";
+export component RefineIdWindow inherits Window {
+    in-out property <string> window-title: "ReFineID";
     title: root.window-title;
     preferred-width: 900px;
     preferred-height: 650px;
@@ -107,7 +107,7 @@ export component CardManagerWindow inherits Window {
                 vertical-stretch: 0;
                 spacing: 4px;
                 Text {
-                    text: "ReFineID Card Manager";
+                    text: "ReFineID";
                     font-size: 26px;
                     font-weight: 700;
                 }
@@ -152,7 +152,7 @@ export component CardManagerWindow inherits Window {
             vertical-stretch: 0;
             spacing: 8px;
             Button {
-                text: "PINs";
+                text: "Sign PDF";
                 height: 36px;
                 vertical-stretch: 0;
                 enabled: root.card-present && root.selected-view != 0;
@@ -168,7 +168,7 @@ export component CardManagerWindow inherits Window {
             }
 
             Button {
-                text: "Sign PDF";
+                text: "PINs";
                 height: 36px;
                 vertical-stretch: 0;
                 enabled: root.card-present && root.selected-view != 2;
@@ -273,7 +273,7 @@ export component CardManagerWindow inherits Window {
             }
         }
 
-        if root.card-present && root.selected-view == 0: VerticalBox {
+        if root.card-present && root.selected-view == 2: VerticalBox {
             vertical-stretch: 0;
             VerticalBox {
                 vertical-stretch: 0;
@@ -651,7 +651,7 @@ export component CardManagerWindow inherits Window {
             }
         }
 
-        if root.card-present && root.selected-view == 2: VerticalBox {
+        if root.card-present && root.selected-view == 0: VerticalBox {
             vertical-stretch: 0;
             spacing: 12px;
 

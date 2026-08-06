@@ -27,7 +27,7 @@ sudo NIX_CONFIG="experimental-features = nix-command flakes" nixos-rebuild switc
 The `NIX_CONFIG` prefix is needed only on the first rebuild: `getFlake`
 requires flakes, and the config line enabling them has not taken
 effect yet. One rebuild later the system has the `refineid` CLI, the
-Card Manager (application menu entry included), pcscd with the CCID
+GUI (in the application menu as "ReFineID"), pcscd with the CCID
 driver, the PKCS#11 module registered for p11-kit consumers, and
 Firefox card login. Plug in a reader and run `refineid card`.
 
@@ -107,8 +107,8 @@ sudo nixos-rebuild switch
 
 `programs.refineid.enable = true` gives you:
 
-- `refineid` and `refineid-card-manager` in the system PATH, plus a
-  Card Manager entry in the application launcher;
+- `refineid` and `refineid-gui` in the system PATH, plus a
+  "ReFineID" entry in the application launcher;
 - `services.pcscd` running with the CCID reader driver -- no separate
   smart-card setup;
 - the PKCS#11 module registered system-wide for p11-kit consumers
@@ -146,7 +146,7 @@ With flakes:
 ```sh
 nix build github:ReFineID/ReFineID-Unix
 ./result/bin/refineid card          # full card readout
-./result/bin/refineid-card-manager  # the GUI
+./result/bin/refineid-gui  # the GUI
 ```
 
 From a clone, without flakes:
@@ -172,7 +172,7 @@ nix develop        # flakes; or: nix-shell
 cargo build --workspace
 cargo test --workspace
 cargo run -p refineid-client --bin refineid -- card
-cargo run -p refineid-card-manager
+cargo run -p refineid-gui
 ```
 
 The shell provides the toolchain, `pcsc_scan` (reader debugging),
