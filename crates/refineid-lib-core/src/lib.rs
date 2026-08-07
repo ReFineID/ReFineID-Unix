@@ -12,7 +12,7 @@
 // implied. See the License for the specific language governing
 // permissions and limitations under the License.
 
-//! FINEID smartcard protocol -- language-agnostic, transport-
+//! FINEID smart-card protocol -- language-agnostic, transport-
 //! agnostic.
 //!
 //! Layered from the card edge upwards. The foundation modules
