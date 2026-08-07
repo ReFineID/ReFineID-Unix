@@ -14,13 +14,13 @@ Add to `/etc/nixos/configuration.nix`:
     ((builtins.getFlake "github:ReFineID/ReFineID-Unix").nixosModules.default)
   ];
   programs.refineid.enable = true;
-  programs.firefox.enable = true;   # for browser card login
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 ```
 
-Nix rejects an attribute defined twice in the same file, so skip any
-line your `configuration.nix` already has -- graphical installs
-generate `programs.firefox.enable = true;` out of the box.
+Browser card login needs `programs.firefox.enable = true;` -- already
+present in the generated `configuration.nix` of a graphical install,
+so add it only if it is missing (Nix rejects the attribute defined
+twice in the same file).
 
 then run:
 
