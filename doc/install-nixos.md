@@ -62,9 +62,10 @@ there across garbage collection.
 The sections below unpack the same install for existing
 configurations, flake-based systems, and development.
 
-Two paths: the **system-wide install** (recommended -- one option
+Three paths: the **system-wide install** (recommended -- one option
 enables the CLI, the GUI, the smart-card daemon, and Firefox
-integration) and the **one-off build** (try it without touching the
+integration), the **single-user install** (one account gets the
+tools), and the **one-off build** (try it without touching the
 system configuration).
 
 ## 1. System-wide install (recommended)
@@ -167,7 +168,35 @@ modutil -dbdir sql:$HOME/.mozilla/firefox/<profile> \
         -libfile "$(nix build github:ReFineID/ReFineID-Unix --print-out-paths --no-link)/lib/librefineid_pkcs11.so"
 ```
 
-## 2. One-off build (no system changes)
+## 2. Single-user install
+
+Only the smart-card daemon is system-wide; the rest can live in one
+user's profile. In `/etc/nixos/configuration.nix`:
+
+```nix
+  services.pcscd.enable = true;
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+  nix.settings.keep-outputs = true;
+```
+
+then, as the user:
+
+```sh
+nix profile install github:ReFineID/ReFineID-Unix
+```
+
+That user gets the `refineid` CLI and the GUI, application-menu
+entry included; other accounts see nothing. Update with:
+
+```sh
+nix profile upgrade --all
+```
+
+Firefox card login needs the manual per-profile registration from
+the section above, with the module at
+`~/.nix-profile/lib/librefineid_pkcs11.so`.
+
+## 3. One-off build (no system changes)
 
 With flakes:
 
@@ -191,7 +220,7 @@ access -- enable `services.pcscd.enable = true;` in
 `configuration.nix` (there is no reliable ad-hoc way to run pcscd on
 NixOS).
 
-## 3. Development shell
+## 4. Development shell
 
 For hacking on the source:
 
@@ -233,7 +262,7 @@ consumes a card retry, so double-check `REFINEID_TEST_PIN1` before
 running; the module refuses further attempts when the counter runs
 low.
 
-## 4. Verifying the install
+## 5. Verifying the install
 
 Reader and card visible:
 
