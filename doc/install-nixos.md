@@ -15,45 +15,45 @@ ReFineID crates.
 Add to `/etc/nixos/configuration.nix`:
 
 ```nix
-  imports = [
-    ./hardware-configuration.nix
-    ((builtins.getFlake "github:ReFineID/ReFineID-Unix").nixosModules.default)
-  ];
-  programs.refineid.enable = true;
+  services.pcscd.enable = true;   # the smart-card daemon
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
   # Keep the dependency build in the store across garbage collection,
   # so updates never recompile more than the ReFineID crates.
   nix.settings.keep-outputs = true;
 ```
 
-Browser card login needs `programs.firefox.enable = true;` -- already
-present in the generated `configuration.nix` of a graphical install,
-so add it only if it is missing.
-
 then run:
 
 ```sh
-sudo NIX_CONFIG="experimental-features = nix-command flakes" nixos-rebuild switch
+sudo nixos-rebuild switch
+nix profile install github:ReFineID/ReFineID-Unix
 ```
 
-The `NIX_CONFIG` prefix is needed only on the first rebuild: `getFlake`
-requires flakes, and the config line enabling them has not taken
-effect yet. One rebuild later the system has the `refineid` CLI, the
-GUI (in the application menu as "ReFineID"), pcscd with the CCID
-driver, the PKCS#11 module registered for p11-kit consumers, and
-Firefox card login. Plug in a reader and run `refineid card`.
+Your user now has the `refineid` CLI and the GUI (in the application
+menu as "ReFineID"); other accounts see nothing. Plug in a reader
+and run `refineid card`.
+
+For browser card login, register the PKCS#11 module in Firefox once:
+Settings > Privacy & Security > Security Devices > Load, module
+filename `~/.nix-profile/lib/librefineid_pkcs11.so`. The system-wide
+install below does this wiring automatically, for every account.
 
 ## Updating
 
-The install follows the repository's main branch; updating is another
-rebuild:
+The install follows the repository's main branch. Single-user:
+
+```sh
+NIX_CONFIG="tarball-ttl = 0" nix profile upgrade --all
+```
+
+System-wide:
 
 ```sh
 sudo NIX_CONFIG="tarball-ttl = 0" nixos-rebuild switch
 ```
 
-`tarball-ttl = 0` makes Nix fetch the current revision; without it a
-rebuild reuses a revision fetched within the last hour. Only the
+`tarball-ttl = 0` makes Nix fetch the current revision; without it
+the revision fetched within the last hour is reused. Only the
 ReFineID crates recompile on an update -- the dependency build is
 reused from the local Nix store until Cargo.lock or the pinned
 nixpkgs changes, and `nix.settings.keep-outputs = true` keeps it
@@ -62,13 +62,13 @@ there across garbage collection.
 The sections below unpack the same install for existing
 configurations, flake-based systems, and development.
 
-Three paths: the **system-wide install** (recommended -- one option
-enables the CLI, the GUI, the smart-card daemon, and Firefox
-integration), the **single-user install** (one account gets the
-tools), and the **one-off build** (try it without touching the
-system configuration).
+Three paths: the **single-user install** (the fresh-machine path
+above -- one account gets the tools), the **system-wide install**
+(one option enables the CLI, the GUI, the smart-card daemon, and
+Firefox integration for every account), and the **one-off build**
+(try it without touching the system configuration).
 
-## 1. System-wide install (recommended)
+## 1. System-wide install (every account)
 
 Works on any NixOS 26.05 or newer with flakes enabled. Flakes are on
 by default on recent installs; if not, add to
@@ -129,8 +129,11 @@ in
 `fetchTarball`.) Then:
 
 ```sh
-sudo nixos-rebuild switch
+sudo NIX_CONFIG="experimental-features = nix-command flakes" nixos-rebuild switch
 ```
+
+The `NIX_CONFIG` prefix is needed only while the flakes setting has
+not yet taken effect: `getFlake` requires it.
 
 ### What the option does
 
@@ -145,7 +148,8 @@ sudo nixos-rebuild switch
   `/etc/pkcs11/modules/refineid.module`;
 - Firefox card login configured automatically through the
   `SecurityDevices` enterprise policy **when Firefox is enabled with
-  `programs.firefox.enable = true`**. Insert the card, open a
+  `programs.firefox.enable = true`** (graphical installs generate
+  that line; add it only if missing). Insert the card, open a
   card-login service, pick the certificate, enter PIN 1. Set
   `programs.refineid.firefoxIntegration = false` to opt out.
 
@@ -168,35 +172,7 @@ modutil -dbdir sql:$HOME/.mozilla/firefox/<profile> \
         -libfile "$(nix build github:ReFineID/ReFineID-Unix --print-out-paths --no-link)/lib/librefineid_pkcs11.so"
 ```
 
-## 2. Single-user install
-
-Only the smart-card daemon is system-wide; the rest can live in one
-user's profile. In `/etc/nixos/configuration.nix`:
-
-```nix
-  services.pcscd.enable = true;
-  nix.settings.experimental-features = [ "nix-command" "flakes" ];
-  nix.settings.keep-outputs = true;
-```
-
-then, as the user:
-
-```sh
-nix profile install github:ReFineID/ReFineID-Unix
-```
-
-That user gets the `refineid` CLI and the GUI, application-menu
-entry included; other accounts see nothing. Update with:
-
-```sh
-nix profile upgrade --all
-```
-
-Firefox card login needs the manual per-profile registration from
-the section above, with the module at
-`~/.nix-profile/lib/librefineid_pkcs11.so`.
-
-## 3. One-off build (no system changes)
+## 2. One-off build (no system changes)
 
 With flakes:
 
@@ -220,7 +196,7 @@ access -- enable `services.pcscd.enable = true;` in
 `configuration.nix` (there is no reliable ad-hoc way to run pcscd on
 NixOS).
 
-## 4. Development shell
+## 3. Development shell
 
 For hacking on the source:
 
@@ -262,7 +238,7 @@ consumes a card retry, so double-check `REFINEID_TEST_PIN1` before
 running; the module refuses further attempts when the counter runs
 low.
 
-## 5. Verifying the install
+## 4. Verifying the install
 
 Reader and card visible:
 
@@ -274,8 +250,9 @@ refineid card            # full readout: identity, certs, PIN counters
 PKCS#11 module answers:
 
 ```sh
+# single-user: ~/.nix-profile/lib/librefineid_pkcs11.so
 pkcs11-tool --module /run/current-system/sw/lib/librefineid_pkcs11.so -L
-p11-kit list-modules     # shows refineid when the p11-kit config is active
+p11-kit list-modules     # shows refineid with the system-wide install
 ```
 
 Firefox: with the card inserted, Settings > Privacy & Security >
