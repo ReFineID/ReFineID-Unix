@@ -18,6 +18,10 @@ Add to `/etc/nixos/configuration.nix`:
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 ```
 
+Nix rejects an attribute defined twice in the same file, so skip any
+line your `configuration.nix` already has -- graphical installs
+generate `programs.firefox.enable = true;` out of the box.
+
 then run:
 
 ```sh
