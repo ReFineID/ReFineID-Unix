@@ -4,9 +4,8 @@ Everything below builds ReFineID from this source tree. Nix fetches
 every build dependency (Rust toolchain, pcsc-lite, fontconfig, GUI
 libraries) by itself; nothing needs to be installed by hand first.
 
-Building needs roughly 8 GB of memory free (the release build
-optimises the whole program as one unit); on a smaller machine or VM,
-add swap before building -- see Troubleshooting.
+Building needs a few gigabytes of memory free; on a small machine or
+VM, add swap before building -- see Troubleshooting.
 
 ## Fresh machine, shortest path
 

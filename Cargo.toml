@@ -128,7 +128,7 @@ redundant_explicit_links = "deny"
 # caught panic to a status code.
 [profile.release]
 opt-level = 3
-lto = "fat"                  # aggressive cross-crate inlining + dead-code elimination
+lto = "thin"                 # cross-crate optimisation; fat LTO's memory peak OOMs 8 GB machines
 codegen-units = 1            # one unit per crate: reproducibility + better optimisation
 strip = "symbols"            # strip debug symbols from the final binary
 overflow-checks = true       # runtime overflow checks (off by default in release)
