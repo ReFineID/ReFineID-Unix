@@ -21,6 +21,9 @@ Add to `/etc/nixos/configuration.nix`:
   ];
   programs.refineid.enable = true;
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
+  # Keep the dependency build in the store across garbage collection,
+  # so updates never recompile more than the ReFineID crates.
+  nix.settings.keep-outputs = true;
 ```
 
 Browser card login needs `programs.firefox.enable = true;` -- already
@@ -39,6 +42,22 @@ effect yet. One rebuild later the system has the `refineid` CLI, the
 GUI (in the application menu as "ReFineID"), pcscd with the CCID
 driver, the PKCS#11 module registered for p11-kit consumers, and
 Firefox card login. Plug in a reader and run `refineid card`.
+
+## Updating
+
+The install follows the repository's main branch; updating is another
+rebuild:
+
+```sh
+sudo NIX_CONFIG="tarball-ttl = 0" nixos-rebuild switch
+```
+
+`tarball-ttl = 0` makes Nix fetch the current revision; without it a
+rebuild reuses a revision fetched within the last hour. Only the
+ReFineID crates recompile on an update -- the dependency build is
+reused from the local Nix store until Cargo.lock or the pinned
+nixpkgs changes, and `nix.settings.keep-outputs = true` keeps it
+there across garbage collection.
 
 The sections below unpack the same install for existing
 configurations, flake-based systems, and development.
