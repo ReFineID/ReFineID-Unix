@@ -196,6 +196,32 @@ struct CachedImages {
     signature: Option<UiImage>,
 }
 
+/// Condense a PC/SC reader name for display.
+///
+/// pcsc-lite composes reader names as `<vendor> <product> [<product>]
+/// <interface> <slot>`, typically repeating the product name inside
+/// the brackets and appending `00 00` for a sole reader. Drop the
+/// bracketed segment when the surrounding text already contains it,
+/// and the all-zero index suffix; non-zero indices still distinguish
+/// multiple identical readers.
+fn condense_reader_name(reader: &str) -> String {
+    let mut name = reader.trim().to_owned();
+    if let (Some(open), Some(close)) = (name.find('['), name.rfind(']'))
+        && open < close
+    {
+        let inner = name[open + 1..close].trim().to_lowercase();
+        let outer = format!("{} {}", &name[..open], &name[close + 1..]).to_lowercase();
+        if !inner.is_empty() && outer.contains(&inner) {
+            name.replace_range(open..=close, "");
+        }
+    }
+    let mut words: Vec<&str> = name.split_whitespace().collect();
+    if words.ends_with(&["00", "00"]) {
+        words.truncate(words.len() - 2);
+    }
+    words.join(" ")
+}
+
 fn card_tab_label(card: &ManagedCard) -> String {
     let model = card
         .activation_context
@@ -212,7 +238,7 @@ fn card_tab_label(card: &ManagedCard) -> String {
     format!(
         "{} / {}{model}",
         card.report.identity.person_string(),
-        card.report.reader
+        condense_reader_name(&card.report.reader)
     )
 }
 
@@ -449,7 +475,7 @@ fn show_selected_card(
         window.set_reader_name(
             format!(
                 "{} / {} {} v{}",
-                card.report.reader,
+                condense_reader_name(&card.report.reader),
                 context.model.vendor(),
                 context.model.vendor_product(),
                 context.model.vendor_product_version()
@@ -1831,13 +1857,32 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CARD_PRESENCE_WAIT, legacy_activation_required, normalized_puk_input, optional_can,
+        CARD_PRESENCE_WAIT, condense_reader_name, legacy_activation_required,
+        normalized_puk_input, optional_can,
         pin_change_available, puk_status, recovery_availability, refine_recovery_submission,
         secret, signed_pdf_file_name, timestamp_authority_url, timestamp_credentials,
         validate_gui_pin, validate_gui_pin_format, validate_gui_puk, validate_replacement_pin,
     };
     use refineid_lib_core::apdu::status_word::PinRetries;
     use refineid_lib_core::auth::{PinStatus, PukStatus};
+
+    #[test]
+    fn reader_name_drops_the_repeated_bracket_and_zero_indices() {
+        assert_eq!(
+            condense_reader_name(
+                "HID Global OMNIKEY 3x21 Smart Card Reader [OMNIKEY 3x21 Smart Card Reader] 00 00"
+            ),
+            "HID Global OMNIKEY 3x21 Smart Card Reader"
+        );
+    }
+
+    #[test]
+    fn reader_name_keeps_an_informative_bracket_and_distinguishing_indices() {
+        assert_eq!(
+            condense_reader_name("Broadcom Corp 58200 [Contacted SmartCard] 01 00"),
+            "Broadcom Corp 58200 [Contacted SmartCard] 01 00"
+        );
+    }
 
     #[test]
     fn presence_wait_parks_long_enough_to_be_event_driven() {
