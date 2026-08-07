@@ -70,6 +70,11 @@ export component RefineIdWindow inherits Window {
     in-out property <string> pdf-pin2: "";
     in-out property <string> pdf-sign-result: "";
     in-out property <int> sign-operation: 0;
+    // 0 = PAdES inside the PDF, 1 = ASiC-E container beside it.
+    in-out property <int> sign-format: 0;
+    // A non-PDF document has no inside to sign: the container is the
+    // only shape, and the choice is shown locked rather than hidden.
+    in-out property <bool> sign-format-locked: false;
     in-out property <int> timestamp-scheme: 1;
     in-out property <string> timestamp-host-path: "timestamp.sectigo.com/qualified";
     in-out property <string> timestamp-username: "";
@@ -707,7 +712,7 @@ export component RefineIdWindow inherits Window {
                     vertical-stretch: 0;
                     spacing: 8px;
                     Button {
-                        text: root.pdf-document-name == "" ? "Choose PDF..." : "Choose another PDF...";
+                        text: root.pdf-document-name == "" ? "Choose document..." : "Choose another document...";
                         height: 36px;
                         vertical-stretch: 0;
                         enabled: !root.busy;
@@ -716,6 +721,27 @@ export component RefineIdWindow inherits Window {
                     Text {
                         text: root.pdf-document-name == "" ? "No document selected" : root.pdf-document-name;
                         vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                HorizontalBox {
+                    height: 36px;
+                    vertical-stretch: 0;
+                    spacing: 8px;
+                    Text {
+                        text: "Format";
+                        vertical-alignment: center;
+                    }
+                    ComboBox {
+                        model: ["In the PDF (PAdES)", "Container (ASiC-E)"];
+                        current-index <=> root.sign-format;
+                        enabled: !root.busy && !root.sign-format-locked;
+                        preferred-width: 260px;
+                        height: 36px;
+                        vertical-stretch: 0;
+                    }
+                    Rectangle {
                         horizontal-stretch: 1;
                     }
                 }

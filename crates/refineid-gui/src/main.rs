@@ -41,6 +41,7 @@ use refineid_lib_core::pin::{
 };
 use refineid_lib_core::pin_retry_risk::PinRetryRisk;
 use refineid_lib_core::pkcs15::CardGeneration;
+use refineid_lib_core::sign::document::Format;
 use refineid_lib_core::sign::pades::SignatureInk;
 use slint::{ComponentHandle as _, Image, Rgba8Pixel, SharedPixelBuffer};
 
@@ -165,6 +166,7 @@ struct PdfSigningJob {
     handwriting: Option<SignatureInk>,
     timestamp_authority: String,
     timestamp_credentials: Option<refineid_client::card_sign::TimestampCredentials>,
+    format: Format,
 }
 
 /// Start a full card inspection without blocking Slint's event loop.
@@ -735,7 +737,30 @@ fn run_pdf_signing(job: PdfSigningJob) -> PdfSignResult {
         handwriting,
         timestamp_authority,
         timestamp_credentials,
+        format,
     } = job;
+    // The container carries the file unchanged, so there is no signed
+    // revision to draw a visible mark into - the card images are not
+    // read at all.
+    if format == Format::AsicEXades {
+        let report = refineid_client::card_manager::sign_asice(
+            refineid_client::card_manager::AsicSignOptions {
+                input,
+                output: output.clone(),
+                pin2,
+                can,
+                reader_filter: Some(reader),
+                timestamp_authority,
+                timestamp_credentials,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        return Ok(format!(
+            "Signed container saved to {} with {} timestamp token(s).",
+            output.display(),
+            report.timestamps
+        ));
+    }
     let handwriting = match (handwriting, can) {
         (Some(ink), _) => Some(ink),
         (None, Some(can)) => {
@@ -808,9 +833,13 @@ fn image_file_name(person_name: &str, image_label: &str) -> String {
 
 /// The signed document's suggested name: the original's, with the UTC
 /// signing instant, colons replaced so the name is safe everywhere.
-fn signed_pdf_file_name(
+///
+/// The extension follows the format: the PDF keeps its own, a
+/// container is named `.asice`.
+fn signed_document_file_name(
     input: &std::path::Path,
     signed_at: &refineid_lib_core::x509::DateTime,
+    extension: &str,
 ) -> String {
     let stem = input
         .file_stem()
@@ -818,7 +847,14 @@ fn signed_pdf_file_name(
         .filter(|stem| !stem.trim().is_empty())
         .unwrap_or("Document");
     let instant = signed_at.to_string().replace(':', "-");
-    format!("{stem} - signed at {instant}.pdf")
+    format!("{stem} - signed at {instant}.{extension}")
+}
+
+/// Whether a chosen file can hold a `PAdES` signature at all.
+fn is_pdf(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
 }
 
 fn timestamp_authority_url(scheme: i32, host_path: &str) -> Result<String, String> {
@@ -1201,6 +1237,7 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             let Some(path) = rfd::FileDialog::new()
                 .add_filter("PDF document", &["pdf"])
+                .add_filter("Any document", &["*"])
                 .pick_file()
             else {
                 return;
@@ -1209,6 +1246,16 @@ fn main() -> Result<(), slint::PlatformError> {
                 .file_name()
                 .and_then(std::ffi::OsStr::to_str)
                 .map_or_else(|| path.display().to_string(), str::to_owned);
+            // A PDF can carry its own signature and defaults to that; any
+            // other file type signs into an ASiC-E container, with the
+            // choice shown locked rather than hidden.
+            if is_pdf(&path) {
+                window.set_sign_format_locked(false);
+                window.set_sign_format(0);
+            } else {
+                window.set_sign_format_locked(true);
+                window.set_sign_format(1);
+            }
             *pdf_document_state.borrow_mut() = Some(path);
             window.set_pdf_document_name(display.into());
             window.set_pdf_sign_result("".into());
@@ -1230,13 +1277,25 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             let Some(input) = pdf_document_state.borrow().clone() else {
-                window.set_pdf_sign_result("Choose a PDF document first.".into());
+                window.set_pdf_sign_result("Choose a document first.".into());
                 return;
             };
-            let default_name =
-                signed_pdf_file_name(&input, &refineid_client::card_check::now_date_time());
+            let format = if window.get_sign_format() == 1 {
+                Format::AsicEXades
+            } else {
+                Format::Pades
+            };
+            let (filter_name, extension) = match format {
+                Format::AsicEXades => ("ASiC-E container", "asice"),
+                _ => ("PDF document", "pdf"),
+            };
+            let default_name = signed_document_file_name(
+                &input,
+                &refineid_client::card_check::now_date_time(),
+                extension,
+            );
             let mut dialog = rfd::FileDialog::new()
-                .add_filter("PDF document", &["pdf"])
+                .add_filter(filter_name, &[extension])
                 .set_file_name(&default_name);
             if let Some(parent) = input.parent() {
                 dialog = dialog.set_directory(parent);
@@ -1245,11 +1304,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
             if output.extension().is_none() {
-                output.set_extension("pdf");
+                output.set_extension(extension);
             }
             if output == input {
                 window.set_pdf_sign_result(
-                    "Choose a destination different from the original PDF.".into(),
+                    "Choose a destination different from the original document.".into(),
                 );
                 return;
             }
@@ -1295,6 +1354,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     handwriting,
                     timestamp_authority,
                     timestamp_credentials,
+                    format,
                 })
             })();
             let job = match job {
@@ -1857,11 +1917,11 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CARD_PRESENCE_WAIT, condense_reader_name, legacy_activation_required,
-        normalized_puk_input, optional_can,
-        pin_change_available, puk_status, recovery_availability, refine_recovery_submission,
-        secret, signed_pdf_file_name, timestamp_authority_url, timestamp_credentials,
-        validate_gui_pin, validate_gui_pin_format, validate_gui_puk, validate_replacement_pin,
+        CARD_PRESENCE_WAIT, condense_reader_name, legacy_activation_required, normalized_puk_input,
+        optional_can, pin_change_available, puk_status, recovery_availability,
+        refine_recovery_submission, secret, signed_document_file_name, timestamp_authority_url,
+        timestamp_credentials, validate_gui_pin, validate_gui_pin_format, validate_gui_puk,
+        validate_replacement_pin,
     };
     use refineid_lib_core::apdu::status_word::PinRetries;
     use refineid_lib_core::auth::{PinStatus, PukStatus};
@@ -1898,9 +1958,27 @@ mod tests {
         let instant =
             refineid_lib_core::x509::DateTime::new(2026, 8, 5, 14, 30, 12).expect("valid instant");
         assert_eq!(
-            signed_pdf_file_name(input, &instant),
+            signed_document_file_name(input, &instant, "pdf"),
             "Agreement - signed at 2026-08-05T14-30-12Z.pdf"
         );
+    }
+
+    #[test]
+    fn signed_container_is_named_asice_whatever_the_source_was() {
+        let input = std::path::Path::new("/documents/Agreement.odt");
+        let instant =
+            refineid_lib_core::x509::DateTime::new(2026, 8, 5, 14, 30, 12).expect("valid instant");
+        assert_eq!(
+            signed_document_file_name(input, &instant, "asice"),
+            "Agreement - signed at 2026-08-05T14-30-12Z.asice"
+        );
+    }
+
+    #[test]
+    fn only_a_pdf_extension_offers_the_pades_shape() {
+        assert!(super::is_pdf(std::path::Path::new("/a/b.PDF")));
+        assert!(!super::is_pdf(std::path::Path::new("/a/b.odt")));
+        assert!(!super::is_pdf(std::path::Path::new("/a/b")));
     }
 
     #[test]

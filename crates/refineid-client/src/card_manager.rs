@@ -64,6 +64,29 @@ pub struct PdfSignOptions {
     pub timestamp_credentials: Option<TimestampCredentials>,
 }
 
+/// Inputs for one qualified `ASiC-E` container signature from the
+/// graphical client.
+///
+/// No visible-signature request: the container carries the file
+/// unchanged, so there is no signed revision to draw a mark into.
+#[derive(Debug)]
+pub struct AsicSignOptions {
+    /// Existing document of any type chosen by the user.
+    pub input: PathBuf,
+    /// Distinct destination chosen before the card PIN is used.
+    pub output: PathBuf,
+    /// Qualified-signature PIN, consumed and zeroized by the sign operation.
+    pub pin2: PinBytes,
+    /// Optional CAN for contactless signing.
+    pub can: Option<Can>,
+    /// Reader shown in the card-manager view.
+    pub reader_filter: Option<String>,
+    /// Sole qualified RFC 3161 authority selected in the graphical client.
+    pub timestamp_authority: String,
+    /// Optional in-memory HTTP Basic credentials for that authority.
+    pub timestamp_credentials: Option<TimestampCredentials>,
+}
+
 /// Lightweight PC/SC reader-presence snapshot used only to detect changes.
 ///
 /// The reader names may include unrelated smart cards. Callers must inspect
@@ -165,6 +188,73 @@ pub fn sign_pdf(options: PdfSignOptions) -> Result<SignReport, SignErrorKind> {
         timestamp_authority,
         timestamp_credentials,
     );
+    crate::card_sign::sign_qualified_first(
+        PcscBackend,
+        SignOptions {
+            input,
+            output,
+            pin: pin2,
+            save_cert: None,
+            reader_filter,
+            can,
+            document: Some(document),
+        },
+    )
+}
+
+/// Produce an `ASiC-E` container carrying an `XAdES-LT` signature.
+///
+/// The `.asice`/`.bdoc` format Estonian `DigiDoc` and other Baltic
+/// tooling exchanges (`ETSI EN 319 162-1`, `BDOC 2.1`): the file
+/// travels unchanged inside the archive beside a signature that
+/// covers it, with a signature timestamp and the collected chain and
+/// revocation evidence. The original input is read before the
+/// destination is written.
+///
+/// # Errors
+/// Reader/card access, PIN, document construction, timestamp,
+/// trusted-list, revocation-evidence, or output-write failure.
+pub fn sign_asice(options: AsicSignOptions) -> Result<SignReport, SignErrorKind> {
+    let AsicSignOptions {
+        input,
+        output,
+        pin2,
+        can,
+        reader_filter,
+        timestamp_authority,
+        timestamp_credentials,
+    } = options;
+    if input == output {
+        return Err(SignErrorKind::SignatureWrite {
+            path: output,
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "signed container destination must differ from the original",
+            ),
+        });
+    }
+    let now = crate::card_check::now_date_time();
+    let document = DocumentRequest {
+        format: Format::AsicEXades,
+        additional_inputs: Vec::new(),
+        signing_time: SigningTime {
+            year: now.year(),
+            month: now.month(),
+            day: now.day(),
+            hour: now.hour(),
+            minute: now.minutes(),
+            second: now.seconds(),
+        },
+        metadata: SignatureMetadata::default(),
+        visible_signature: None,
+        // Level LT: an archive construction for `ASiC-E` with `XAdES`
+        // is not implemented, and the format refuses to pretend.
+        archive: false,
+        long_term: true,
+        timestamp_authorities: vec![timestamp_authority],
+        timestamp_credentials,
+        require_qualified_timestamps: true,
+    };
     crate::card_sign::sign_qualified_first(
         PcscBackend,
         SignOptions {
