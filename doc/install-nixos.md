@@ -5,7 +5,10 @@ every build dependency (Rust toolchain, pcsc-lite, fontconfig, GUI
 libraries) by itself; nothing needs to be installed by hand first.
 
 Building needs a few gigabytes of memory free; on a small machine or
-VM, add swap before building -- see Troubleshooting.
+VM, add swap before building -- see Troubleshooting. Only the first
+build compiles everything: the dependency build is kept in the local
+Nix store and reused, so following the repository rebuilds just the
+ReFineID crates.
 
 ## Fresh machine, shortest path
 
