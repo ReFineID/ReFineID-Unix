@@ -4,6 +4,10 @@ Everything below builds ReFineID from this source tree. Nix fetches
 every build dependency (Rust toolchain, pcsc-lite, fontconfig, GUI
 libraries) by itself; nothing needs to be installed by hand first.
 
+Building needs roughly 8 GB of memory free (the release build
+optimises the whole program as one unit); on a smaller machine or VM,
+add swap before building -- see Troubleshooting.
+
 ## Fresh machine, shortest path
 
 Add to `/etc/nixos/configuration.nix`:
@@ -229,6 +233,18 @@ Security Devices should list `ReFineID` with your reader under it,
 and a card-login site will prompt for the certificate and PIN 1.
 
 ## Troubleshooting
+
+- **Build fails with `rustc was terminated by a deadly signal`.**
+  The machine ran out of memory during the final optimisation step,
+  which needs several gigabytes on its own. Free up memory (a desktop
+  session and parallel compile jobs count against it), give a VM more
+  RAM, or add temporary swap and rebuild:
+
+  ```sh
+  sudo fallocate -l 8G /var/swapfile
+  sudo chmod 600 /var/swapfile
+  sudo mkswap /var/swapfile && sudo swapon /var/swapfile
+  ```
 
 - **`refineid card` reports no readers.** pcscd is not running
   (`systemctl status pcscd.socket`) or the reader is not attached.
