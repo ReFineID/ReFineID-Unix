@@ -81,6 +81,8 @@ pub struct AsicSignOptions {
     pub can: Option<Can>,
     /// Reader shown in the card-manager view.
     pub reader_filter: Option<String>,
+    /// Full serial captured when that view inspected the card.
+    pub expected_serial: TokenSerial,
     /// Sole qualified RFC 3161 authority selected in the graphical client.
     pub timestamp_authority: String,
     /// Optional in-memory HTTP Basic credentials for that authority.
@@ -221,6 +223,7 @@ pub fn sign_asice(options: AsicSignOptions) -> Result<SignReport, SignErrorKind>
         pin2,
         can,
         reader_filter,
+        expected_serial,
         timestamp_authority,
         timestamp_credentials,
     } = options;
@@ -246,6 +249,7 @@ pub fn sign_asice(options: AsicSignOptions) -> Result<SignReport, SignErrorKind>
             second: now.seconds(),
         },
         metadata: SignatureMetadata::default(),
+        expected_serial: Some(expected_serial),
         visible_signature: None,
         // Level LT: an archive construction for `ASiC-E` with `XAdES`
         // is not implemented, and the format refuses to pretend.
@@ -288,10 +292,8 @@ fn pdf_document_request(
             second: now.seconds(),
         },
         metadata: SignatureMetadata::default(),
-        visible_signature: Some(VisibleSignatureRequest {
-            expected_serial,
-            handwriting,
-        }),
+        expected_serial: Some(expected_serial),
+        visible_signature: Some(VisibleSignatureRequest { handwriting }),
         archive: true,
         long_term: true,
         timestamp_authorities: vec![timestamp_authority],
@@ -410,10 +412,10 @@ mod tests {
             request.timestamp_authorities,
             ["https://timestamp.sectigo.com/qualified"]
         );
+        assert_eq!(request.expected_serial, Some(serial));
         let visible = request
             .visible_signature
             .expect("visible signature request");
-        assert_eq!(visible.expected_serial, serial);
         assert!(visible.handwriting.is_none());
     }
 }

@@ -246,12 +246,16 @@ pub struct DocumentRequest {
     pub signing_time: SigningTime,
     /// What to record in the signature. Used by `PAdES` only.
     pub metadata: SignatureMetadata,
-    /// Optional visible mark for `PAdES`, bound to the displayed card.
+    /// Full PKCS#15 serial of the card the operator was shown, when a
+    /// trusted inspection view captured one. Verified against the live
+    /// card before PIN verification, whatever the format, so a card
+    /// swap cannot spend the PIN on an undisplayed identity. `None`
+    /// only for flows that sign whichever card is present (the CLI).
+    pub expected_serial: Option<TokenSerial>,
+    /// Optional visible mark for `PAdES`.
     ///
-    /// The caller supplies only the card serial captured by its trusted
-    /// inspection view and optional card-carried handwriting. The name and
-    /// SATU are always read from the live signing certificate. A card swap is
-    /// refused before PIN verification.
+    /// The caller supplies only optional card-carried handwriting. The
+    /// name and SATU are always read from the live signing certificate.
     pub visible_signature: Option<VisibleSignatureRequest>,
     /// Add an archive timestamp over the finished document, raising it
     /// to level LTA.
@@ -298,9 +302,7 @@ pub struct DocumentRequest {
 /// User-interface material for a certificate-derived visible PDF signature.
 #[derive(Debug, Clone)]
 pub struct VisibleSignatureRequest {
-    /// Full PKCS#15 token serial of the card shown to the operator.
-    pub expected_serial: TokenSerial,
-    /// Optional DG7 handwriting read from that card.
+    /// Optional DG7 handwriting read from the displayed card.
     pub handwriting: Option<SignatureInk>,
 }
 
@@ -500,6 +502,9 @@ pub enum SignErrorKind {
     /// A visible signature could not be bound to the live card and signing
     /// certificate before PIN verification.
     VisibleSignature(String),
+    /// The live card is not the card the operator was shown; refused
+    /// before PIN verification.
+    DisplayedCard(String),
     /// The slot's certificate uses a key this crate can build a
     /// document signature with, but whose digest pairing is not one
     /// the formats name.
@@ -615,6 +620,7 @@ impl fmt::Display for SignErrorKind {
             Self::Pcsc(e) => write!(f, "PC/SC: {e}"),
             Self::Document(e) => write!(f, "{e}"),
             Self::VisibleSignature(detail) => write!(f, "visible signature: {detail}"),
+            Self::DisplayedCard(detail) => write!(f, "displayed card: {detail}"),
             Self::Material(detail) => write!(f, "validation material: {detail}"),
             Self::Timestamp(detail) => write!(f, "timestamp: {detail}"),
             Self::UnsupportedDocumentKey(slot) => write!(
@@ -1002,9 +1008,10 @@ fn sign_chain<T: CardTransport>(
     let document = match options.document {
         None => None,
         Some(ref request) => {
+            ensure_displayed_card(transport, request)?;
             let parameters = document_signer(&cert, cert_algorithm, slot, request.signing_time)?;
             let objects = load_data_objects(options, request, input_bytes)?;
-            let metadata = document_metadata(transport, &cert, request)?;
+            let metadata = document_metadata(&cert, request)?;
             let plan = document::plan(request.format, objects, &parameters, &metadata)
                 .map_err(SignErrorKind::Document)?;
             Some((plan, parameters))
@@ -1081,10 +1088,9 @@ fn sign_chain<T: CardTransport>(
 
 /// Resolve a visible PDF mark from the live signing certificate.
 ///
-/// This runs before PIN verification. The expected serial binds optional DG7
-/// handwriting collected by the UI to the same physical card that will sign.
-fn document_metadata<T: CardTransport>(
-    transport: &mut T,
+/// This runs before PIN verification, after the displayed-card check
+/// has bound the session to the card the UI showed.
+fn document_metadata(
     certificate: &Certificate<'_>,
     request: &DocumentRequest,
 ) -> Result<SignatureMetadata, SignErrorKind> {
@@ -1096,12 +1102,6 @@ fn document_metadata<T: CardTransport>(
             "visible marks are supported only for PAdES".to_owned(),
         ));
     }
-
-    let token = transport.read_token_info().map_err(|error| {
-        SignErrorKind::VisibleSignature(format!("cannot re-read EF.TokenInfo: {error}"))
-    })?;
-    let live_serial = token.serial_number_hex.map(render_token_serial);
-    ensure_visible_card(&visible.expected_serial, live_serial.as_ref())?;
 
     let names = certificate.subject.given_names();
     let first = names.first.ok_or_else(|| {
@@ -1131,16 +1131,34 @@ fn document_metadata<T: CardTransport>(
     Ok(metadata)
 }
 
-fn ensure_visible_card(
+/// Refuse to sign when the live card is not the one the operator saw.
+///
+/// Runs before PIN verification for every document request carrying a
+/// displayed serial, whatever the format produces.
+fn ensure_displayed_card<T: CardTransport>(
+    transport: &mut T,
+    request: &DocumentRequest,
+) -> Result<(), SignErrorKind> {
+    let Some(expected) = request.expected_serial.as_ref() else {
+        return Ok(());
+    };
+    let token = transport.read_token_info().map_err(|error| {
+        SignErrorKind::DisplayedCard(format!("cannot re-read EF.TokenInfo: {error}"))
+    })?;
+    let live = token.serial_number_hex.map(render_token_serial);
+    ensure_expected_serial(expected, live.as_ref())
+}
+
+fn ensure_expected_serial(
     expected: &TokenSerial,
     live: Option<&TokenSerial>,
 ) -> Result<(), SignErrorKind> {
     match live {
         Some(live) if live == expected => Ok(()),
-        Some(_different) => Err(SignErrorKind::VisibleSignature(
+        Some(_different) => Err(SignErrorKind::DisplayedCard(
             "the card in the reader is not the card displayed by the application".to_owned(),
         )),
-        None => Err(SignErrorKind::VisibleSignature(
+        None => Err(SignErrorKind::DisplayedCard(
             "the card does not publish a PKCS#15 serial for session binding".to_owned(),
         )),
     }
@@ -2201,6 +2219,7 @@ mod tests {
                 second: 0,
             },
             metadata: SignatureMetadata::default(),
+            expected_serial: None,
             visible_signature: None,
             archive: true,
             long_term: false,
@@ -2249,17 +2268,17 @@ mod tests {
     }
 
     #[test]
-    fn visible_signature_is_bound_to_the_displayed_card() -> TestResult {
+    fn signing_is_bound_to_the_displayed_card() -> TestResult {
         let displayed = TokenSerial::new("displayed-card".to_owned());
         let same = TokenSerial::new("displayed-card".to_owned());
         let replacement = TokenSerial::new("replacement-card".to_owned());
-        ensure_visible_card(&displayed, Some(&same))?;
+        ensure_expected_serial(&displayed, Some(&same))?;
         check_true(
-            ensure_visible_card(&displayed, Some(&replacement)).is_err(),
+            ensure_expected_serial(&displayed, Some(&replacement)).is_err(),
             "card swap is refused",
         )?;
         check_true(
-            ensure_visible_card(&displayed, None).is_err(),
+            ensure_expected_serial(&displayed, None).is_err(),
             "missing live serial is refused",
         )
     }

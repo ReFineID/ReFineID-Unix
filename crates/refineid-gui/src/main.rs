@@ -743,23 +743,18 @@ fn run_pdf_signing(job: PdfSigningJob) -> PdfSignResult {
     // revision to draw a visible mark into - the card images are not
     // read at all.
     if format == Format::AsicEXades {
-        let report = refineid_client::card_manager::sign_asice(
-            refineid_client::card_manager::AsicSignOptions {
-                input,
-                output: output.clone(),
-                pin2,
-                can,
-                reader_filter: Some(reader),
-                timestamp_authority,
-                timestamp_credentials,
-            },
-        )
+        refineid_client::card_manager::sign_asice(refineid_client::card_manager::AsicSignOptions {
+            input,
+            output: output.clone(),
+            pin2,
+            can,
+            reader_filter: Some(reader),
+            expected_serial,
+            timestamp_authority,
+            timestamp_credentials,
+        })
         .map_err(|error| error.to_string())?;
-        return Ok(format!(
-            "Signed container saved to {} with {} timestamp token(s).",
-            output.display(),
-            report.timestamps
-        ));
+        return Ok(format!("Signed container saved to {}.", output.display()));
     }
     let handwriting = match (handwriting, can) {
         (Some(ink), _) => Some(ink),
@@ -776,24 +771,19 @@ fn run_pdf_signing(job: PdfSigningJob) -> PdfSignResult {
         }
         (None, None) => None,
     };
-    let report =
-        refineid_client::card_manager::sign_pdf(refineid_client::card_manager::PdfSignOptions {
-            input,
-            output: output.clone(),
-            pin2,
-            can,
-            reader_filter: Some(reader),
-            expected_serial,
-            handwriting,
-            timestamp_authority,
-            timestamp_credentials,
-        })
-        .map_err(|error| error.to_string())?;
-    Ok(format!(
-        "Signed PDF saved to {} with {} timestamp token(s).",
-        output.display(),
-        report.timestamps
-    ))
+    refineid_client::card_manager::sign_pdf(refineid_client::card_manager::PdfSignOptions {
+        input,
+        output: output.clone(),
+        pin2,
+        can,
+        reader_filter: Some(reader),
+        expected_serial,
+        handwriting,
+        timestamp_authority,
+        timestamp_credentials,
+    })
+    .map_err(|error| error.to_string())?;
+    Ok(format!("Signed PDF saved to {}.", output.display()))
 }
 
 #[expect(

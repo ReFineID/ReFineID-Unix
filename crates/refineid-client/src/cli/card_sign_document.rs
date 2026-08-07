@@ -149,6 +149,9 @@ impl SignDocumentArgs {
                     additional_inputs: inputs.clone(),
                     signing_time,
                     metadata: metadata.clone(),
+                    // The CLI signs whichever card is present; there is
+                    // no prior inspection view to bind to.
+                    expected_serial: None,
                     visible_signature: None,
                     timestamp_authorities: timestamp_authorities.clone(),
                     timestamp_credentials: None,
