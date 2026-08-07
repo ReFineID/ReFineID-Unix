@@ -52,7 +52,16 @@ let
     };
 
     strictDeps = true;
-    nativeBuildInputs = [ pkg-config ];
+    # Identical for the dependency build and the final build: any
+    # difference in the environment invalidates cargo's fingerprints
+    # and recompiles cached dependencies for nothing.
+    nativeBuildInputs = [
+      pkg-config
+      wrapGAppsHook3
+    ];
+    # Only the GUI needs the GTK wrap; leave the CLI and the PKCS#11
+    # module unwrapped (wrapGApp runs in postFixup).
+    dontWrapGApps = true;
     buildInputs = [
       pcsclite
       fontconfig
@@ -74,12 +83,6 @@ craneLib.buildPackage (
   commonArgs
   // {
     inherit cargoArtifacts;
-
-    nativeBuildInputs = commonArgs.nativeBuildInputs ++ [ wrapGAppsHook3 ];
-
-    # Only the GUI needs the GTK environment; leave the CLI and the
-    # PKCS#11 module unwrapped.
-    dontWrapGApps = true;
 
     # The GUI dlopens its windowing stack at runtime.
     runtimeLibs = lib.makeLibraryPath [
