@@ -87,6 +87,13 @@ pub const EU_QUALIFIED_TIMESTAMP_AUTHORITIES: &[&str] = &[
     "http://tss.accv.es:8318/tsa",
 ];
 
+/// The timestamp authority used when the operator configures none.
+///
+/// The Sectigo qualified endpoint, shared by every first-party
+/// `ReFineID` client and documented at
+/// <https://www.sectigo.com/resource-library/time-stamping-server>.
+pub const DEFAULT_TIMESTAMP_AUTHORITY: &str = "http://timestamp.sectigo.com/qualified";
+
 /// HTTP Basic credentials for one explicitly configured timestamp authority.
 ///
 /// Both fields and the derived authorization header are zeroized on drop. The

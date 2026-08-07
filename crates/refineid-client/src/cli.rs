@@ -360,14 +360,17 @@ subcommands:
                      asice-cades only.
         --timestamp U
                      RFC 3161 timestamp authority URL, or a named set.
+                     Default: http://timestamp.sectigo.com/qualified.
                      Repeat for alternatives; a failed answer is
                      skipped, and signing fails when none remains.
-                     Without it the signature time is the signer's own
-                     claim (level B).
                      --timestamp eu-qualified uses public EU endpoints
                      and keeps only signers currently granted as
                      qualified on the authenticated EU trusted lists;
                      LT/LTA applies the same check to a direct URL.
+        --no-timestamp
+                     sign without any timestamp authority; the
+                     signature time is the signer's own claim
+                     (level B).
 
   card decrypt-auth --in PATH --out PATH
       PIN1 + RSA-PKCS1v1.5 decrypt with the auth key.

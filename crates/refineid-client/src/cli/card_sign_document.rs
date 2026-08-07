@@ -28,7 +28,9 @@ use refineid_lib_core::sign::document::Format;
 use refineid_lib_core::sign::pades::SignatureMetadata;
 
 use super::{ArgParseError, argv::RemainingArgv, verb::VerbTag};
-use crate::card_sign::{DocumentRequest, EU_QUALIFIED_TIMESTAMP_AUTHORITIES, SignSlot};
+use crate::card_sign::{
+    DEFAULT_TIMESTAMP_AUTHORITY, DocumentRequest, EU_QUALIFIED_TIMESTAMP_AUTHORITIES, SignSlot,
+};
 
 /// This verb's tag, for error messages.
 const CMD: VerbTag = VerbTag::CardSignDocument;
@@ -202,6 +204,7 @@ impl SignDocumentArgs {
         let mut can_raw: Option<String> = None;
         let mut timestamp_authorities: Vec<String> = Vec::new();
         let mut require_qualified_timestamps = false;
+        let mut no_timestamp = false;
         let mut long_term = false;
         let mut archive = false;
 
@@ -234,6 +237,7 @@ impl SignDocumentArgs {
                         }
                     }
                 }
+                "--no-timestamp" => no_timestamp = true,
                 "--long-term" => long_term = true,
                 "--archive" => archive = true,
                 other => {
@@ -258,6 +262,7 @@ impl SignDocumentArgs {
             archive,
             timestamp_authorities,
             require_qualified_timestamps,
+            no_timestamp,
         )
     }
 
@@ -268,6 +273,7 @@ impl SignDocumentArgs {
     /// command that can run.
     #[expect(
         clippy::too_many_arguments,
+        clippy::fn_params_excessive_bools,
         reason = "one parameter per flag; bundling them into a struct would name the same fields twice"
     )]
     fn resolve(
@@ -281,9 +287,24 @@ impl SignDocumentArgs {
         can_raw: Option<String>,
         long_term: bool,
         archive: bool,
-        timestamp_authorities: Vec<String>,
+        mut timestamp_authorities: Vec<String>,
         require_qualified_timestamps: bool,
+        no_timestamp: bool,
     ) -> Result<Self, ArgParseError> {
+        if no_timestamp && !timestamp_authorities.is_empty() {
+            return Err(ArgParseError::BadValue {
+                cmd: CMD,
+                flag: "--no-timestamp",
+                value: "--timestamp".to_owned(),
+                reason: "choose an authority or none, not both".to_owned(),
+            });
+        }
+        // The Sectigo qualified endpoint is the default across the
+        // first-party ReFineID clients; --no-timestamp is the explicit
+        // route to an unattested level-B signature.
+        if timestamp_authorities.is_empty() && !no_timestamp {
+            timestamp_authorities.push(DEFAULT_TIMESTAMP_AUTHORITY.to_owned());
+        }
         let format_raw = format_raw.ok_or(ArgParseError::Required {
             cmd: CMD,
             name: "--format NAME",
@@ -569,7 +590,10 @@ fn expand_authority(value: &str) -> Result<ExpandedAuthority, ArgParseError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Format, SignDocumentArgs, SignSlot, describe_level, parse_format};
+    use super::{
+        DEFAULT_TIMESTAMP_AUTHORITY, Format, SignDocumentArgs, SignSlot, describe_level,
+        parse_format,
+    };
     use crate::cli::ArgParseError;
     use crate::cli::argv::fixtures::remaining_argv as argv;
     use crate::test_util::{TestResult, check, check_true};
@@ -588,7 +612,64 @@ mod tests {
         check(&a.inputs.len(), &1, "input count")?;
         // The qualified slot is the default: it is the key whose
         // certificate carries non-repudiation.
-        check(&a.slot, &SignSlot::Qualified, "slot")
+        check(&a.slot, &SignSlot::Qualified, "slot")?;
+        // The Sectigo qualified endpoint is the first-party default.
+        check(
+            &a.timestamp_authorities,
+            &vec![DEFAULT_TIMESTAMP_AUTHORITY.to_owned()],
+            "default authority",
+        )
+    }
+
+    #[test]
+    fn no_timestamp_is_the_explicit_route_to_level_b() -> TestResult {
+        let a = SignDocumentArgs::parse(argv(&[
+            "--format",
+            "pades",
+            "--in",
+            "/tmp/d.pdf",
+            "--out",
+            "/tmp/s.pdf",
+            "--no-timestamp",
+        ]))?;
+        check(&a.timestamp_authorities.len(), &0, "no authority")
+    }
+
+    #[test]
+    fn no_timestamp_refuses_a_named_authority() -> TestResult {
+        check_true(
+            SignDocumentArgs::parse(argv(&[
+                "--format",
+                "pades",
+                "--in",
+                "/tmp/d.pdf",
+                "--out",
+                "/tmp/s.pdf",
+                "--no-timestamp",
+                "--timestamp",
+                "http://tsa.example",
+            ]))
+            .is_err(),
+            "an authority and none cannot both be asked for",
+        )
+    }
+
+    #[test]
+    fn no_timestamp_cannot_reach_level_lt() -> TestResult {
+        check_true(
+            SignDocumentArgs::parse(argv(&[
+                "--format",
+                "pades",
+                "--in",
+                "/tmp/d.pdf",
+                "--out",
+                "/tmp/s.pdf",
+                "--no-timestamp",
+                "--long-term",
+            ]))
+            .is_err(),
+            "LT evidence needs an attested time",
+        )
     }
 
     #[test]
