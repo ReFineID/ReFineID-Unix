@@ -273,35 +273,32 @@ one card; pass --reader SUBSTR when multiple cards are connected.
 subcommands:
   card [--offline] [--reader SUBSTR] [--can NNNNNN | --no-can]
        [--crl-file PATH] [--save-cert DIR] [--icao-pkd PATH]
-      per-card readout: ATR, PKCS#15 info, every cert slot's
-      metadata, chain walk + revocation, PIN1/PIN2 retry counters,
-      and (with --can) the eMRTD section (MRZ, face, EF.SOD,
-      DG14/DG15, Active+Chip Authentication, country cross-check).
-        --offline       skip every network fetch (CRL/OCSP/AIA)
+      per-card readout: certificates, chain walk + revocation, PIN
+      retry counters, and (with --can) the eMRTD section.
+        --offline       skip every network fetch
         --reader S      narrow to readers whose name contains S
-        --can NNNNNN    six-digit CAN from the card front; enables eMRTD
+        --can NNNNNN    CAN from the card front; enables eMRTD
         --no-can        skip the eMRTD section (no prompt)
         --crl-file P    use a pre-fetched CRL instead of HTTP fetch
-        --save-cert DIR write each slot's DER to DIR/EF.<fid>.der
-        --icao-pkd P    Master List (.ml) or PKD LDIF; closes the
-                        DSC->CSCA hop in eMRTD passive auth
+        --save-cert DIR write each slot's DER to DIR
+        --icao-pkd P    Master List (.ml) or PKD LDIF trust anchors
       Without --can / --no-can on a TTY, prompts for CAN (empty = skip).
 
   card emrtd --can NNNNNN [options]
-      eMRTD file extraction (same PACE/SM read as `card --can`, plus
-      --save-* flags that write artefacts to disk).
-        --save-face P       face image bytes (JPEG/JPEG2000)
-        --save-signature P  DG7 displayed-signature image
-        --save-sod P        raw EF.SOD (CMS SignedData)
+      eMRTD file extraction (same read as `card --can`, plus --save-*
+      flags that write artefacts to disk).
+        --save-face P       face image
+        --save-signature P  displayed-signature image
+        --save-sod P        raw EF.SOD
         --save-dsc P        embedded Document Signing Certificate DER
-        --csca-dir D        candidate trust anchors for DSC->CSCA
+        --csca-dir D        candidate trust anchors
         --reader S          target one reader
 
   card activate [--allow-reactivate] [--reader SUBSTR]
-      first-time DVV card activation. Prompts for the activation PIN
-      (7 digits, from the DVV activation letter), then new PIN1 + PIN2.
-      WARNING: consumes the activation PIN. 5 wrong tries locks it;
-      recovery then needs the separately-orderable paid PUK.
+      first-time DVV card activation. Prompts for the activation PIN,
+      then new PIN1 + PIN2.
+      WARNING: wrong tries consume the activation PIN's retry counter;
+      locking it leaves recovery to the separately-orderable paid PUK.
       Pre-flight refuses an already-activated card; --allow-reactivate
       overrides.
 
@@ -317,26 +314,24 @@ subcommands:
 
   card sign-auth --in PATH --out PATH [--save-cert PATH]
                  [--reader SUBSTR] [--can NNNNNN]
-      PIN1 + sign with the auth key (RSA-3072 or ECDSA-P384). Locally
-      verifies against the on-card auth cert.
-        --in P         input file (hashed client-side)
+      PIN1 + sign with the auth key. Locally verifies against the
+      on-card auth cert.
+        --in P         input file
         --out P        output file for the raw signature
         --save-cert P  also write the auth cert DER
         --reader S     narrow to readers whose name contains S
-        --can NNNNNN   six-digit CAN from the card front; required
-                       on the contactless interface, where the card
-                       seals PKCS#15 behind PACE. Omit on contact.
-                       Without it on a TTY, prompts when the card
-                       reports the seal.
+        --can NNNNNN   CAN from the card front; required on the
+                       contactless interface, prompted on a TTY
+                       when needed. Omit on contact.
 
   card sign-qualified --in PATH --out PATH [--save-cert PATH]
       same shape as sign-auth but with PIN2 + the qualified-signature
-      key (eIDAS QES; legal weight of a hand-written signature).
+      key.
 
   card sign-document --format F --in PATH [--in PATH ...] --out PATH
       sign into a format a counterparty can open, rather than raw
       signature bytes. PIN2 and the qualified-signature key by
-      default -- the key whose certificate carries non-repudiation.
+      default.
         --format F   pades          signature inside the PDF
                      cades          CMS, document attached
                      cades-detached CMS, document left outside
@@ -370,34 +365,31 @@ subcommands:
                         signature time is the signer's own claim
 
   card decrypt-auth --in PATH --out PATH
-      PIN1 + RSA-PKCS1v1.5 decrypt with the auth key.
-        --in P   ciphertext (exactly 384 bytes, RSA-3072 modulus)
-        --out P  output file for the unpadded plaintext
+      PIN1 + decrypt with the auth key.
+        --in P   ciphertext
+        --out P  output file for the plaintext
 
   card pubkey [--slot auth|qualified] [--format ssh|pem] [--out PATH]
               [--reader SUBSTR] [--comment STR]
       export the public key from an on-card cert. No PIN required.
-        --slot S     auth (EF.4331) or qualified (EF.4332)
+        --slot S     auth or qualified
         --format F   ssh or pem
         --out P      write all blocks to PATH instead of stdout
         --reader S   process only matching readers
         --comment S  SSH comment; default is '<cert CN> <serial>'
 
   card export-all DIR
-      dump every public artefact (cert slots, EF.CardAccess,
-      EF.TokenInfo, ATR) to DIR. No PIN, no network.
+      dump every public artefact to DIR. No PIN, no network.
 
   verify --cert PATH --in PATH --sig PATH
-      offline RSA-PKCS1v15-SHA256 signature verify. Reports ok/FAILED,
-      exits 0/1.
+      offline signature verify. Reports ok/FAILED, exits 0/1.
         --cert P  cert in PEM or DER (auto-detected)
         --in P    the message that was signed
-        --sig P   the raw 384-byte signature
+        --sig P   the raw signature
 
   cert show PATH
-      offline cert inspector. Prints subject, issuer, serial, validity,
-      key + signature algs, key usage, AIA/CRL/OCSP/SAN, and SHA-256
-      fingerprint. PEM or DER, auto-detected.
+      offline cert inspector: prints the certificate's fields and its
+      SHA-256 fingerprint. PEM or DER, auto-detected.
 
   cert chain CERT [--issuer-dir DIR] [--aia-fetch]
       walk the cert chain upward; verify each child against its issuer.
