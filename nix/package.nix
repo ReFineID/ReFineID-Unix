@@ -5,6 +5,10 @@
   lib,
   rustPlatform,
   pkg-config,
+  # GTK apps abort without the GSettings machinery in their
+  # environment (the file chooser reads org.gtk.Settings.FileChooser).
+  wrapGAppsHook3,
+  gsettings-desktop-schemas,
   pcsclite,
   fontconfig,
   # GTK 3 backs the file-chooser dialog (rfd gtk3 backend); linked at
@@ -36,12 +40,20 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ../Cargo.lock;
 
-  nativeBuildInputs = [ pkg-config ];
+  nativeBuildInputs = [
+    pkg-config
+    wrapGAppsHook3
+  ];
   buildInputs = [
     pcsclite
     fontconfig
     gtk3
+    gsettings-desktop-schemas
   ];
+
+  # Only the GUI needs the GTK environment; leave the CLI and the
+  # PKCS#11 module unwrapped.
+  dontWrapGApps = true;
 
   # The GUI dlopens its windowing stack at runtime.
   runtimeLibs = lib.makeLibraryPath [
@@ -55,6 +67,7 @@ rustPlatform.buildRustPackage {
 
   postFixup = ''
     patchelf --add-rpath "$runtimeLibs" $out/bin/refineid-gui
+    wrapGApp $out/bin/refineid-gui
   '';
 
   postInstall = ''
