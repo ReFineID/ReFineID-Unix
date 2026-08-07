@@ -19,8 +19,7 @@ Add to `/etc/nixos/configuration.nix`:
 
 Browser card login needs `programs.firefox.enable = true;` -- already
 present in the generated `configuration.nix` of a graphical install,
-so add it only if it is missing (Nix rejects the attribute defined
-twice in the same file).
+so add it only if it is missing.
 
 then run:
 
