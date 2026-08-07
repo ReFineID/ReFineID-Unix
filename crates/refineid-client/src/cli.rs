@@ -353,52 +353,21 @@ subcommands:
         --location T PAdES /Location
         --reader S   narrow to readers whose name contains S
         --can NNNNNN as for sign-auth
-        --long-term  fetch the certificate chain and a revocation
-                     answer for each link, and embed them. Level LT.
-                     Needs --timestamp. Costs a few round trips at
-                     signing time and buys a signature that still
-                     validates when the responder is gone -- which it
-                     will be, long before a 2031 certificate expires.
-        --archive    add a document timestamp over the finished file,
-                     evidence included. Level LTA, the top of the ETSI
-                     ladder. Implies --long-term. pades and asice-cades
-                     only: those archive with a document timestamp and
-                     an ASiC archive manifest respectively, while cades,
-                     cades-detached, asice and bdoc would need the CAdES
-                     and XAdES archive-timestamp attributes, which are
-                     not built here.
+        --long-term  embed the certificate chain and revocation
+                     evidence (level LT). Needs --timestamp.
+        --archive    add a document timestamp over the finished file
+                     (level LTA); implies --long-term. pades and
+                     asice-cades only.
         --timestamp U
-                     RFC 3161 timestamp authority URL, or the name of a
-                     set of them. Without it the
-                     signature is baseline B and its time is your own
-                     claim; with it the signature is baseline T and a
-                     third party attests it existed by then, which is
-                     what keeps it checkable after the certificate
-                     expires. Works for every format.
-
-                     --timestamp eu-qualified tries these public
-                     endpoints in order:
-
-                       https://timestamp.aped.gov.gr/qtss
-                       http://tss.accv.es:8318/tsa
-
-                     The name is not a static trust assertion. ReFineID
-                     verifies each RFC 3161 signature and request nonce,
-                     authenticates the EU list of trusted lists and the
-                     national lists it names, and retains only a signer
-                     currently granted as a qualified timestamp service.
-                     Level LT/LTA applies the same qualification check
-                     even when an authority was supplied as a direct URL.
-
-                     Repeat --timestamp for alternatives. A failed or
-                     unqualified answer is reported and skipped; if none
-                     remains, signing fails rather than silently falling
-                     back to level B. An archive timestamp has one slot,
-                     so the first authority to pass all checks wins.
-
-                     HTTPS is supported in the default build. A direct
-                     URL is also allowed at level T; without the named set,
-                     its legal trust status remains the validator's policy.
+                     RFC 3161 timestamp authority URL, or a named set.
+                     Repeat for alternatives; a failed answer is
+                     skipped, and signing fails when none remains.
+                     Without it the signature time is the signer's own
+                     claim (level B).
+                     --timestamp eu-qualified uses public EU endpoints
+                     and keeps only signers currently granted as
+                     qualified on the authenticated EU trusted lists;
+                     LT/LTA applies the same check to a direct URL.
 
   card decrypt-auth --in PATH --out PATH
       PIN1 + RSA-PKCS1v1.5 decrypt with the auth key.
