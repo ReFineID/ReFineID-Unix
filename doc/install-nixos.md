@@ -5,7 +5,20 @@ every build dependency (Rust toolchain, pcsc-lite, fontconfig, GUI
 libraries) by itself; nothing needs to be installed by hand first.
 
 Building needs a few gigabytes of memory free; on a small machine or
-VM, add swap before building -- see Troubleshooting.
+VM, add swap before building -- see Troubleshooting. To skip
+compiling entirely, use the binary cache: add to
+`/etc/nixos/configuration.nix`
+
+```nix
+  nix.settings = {
+    substituters = [ "https://cache.garnix.io" ];
+    trusted-public-keys =
+      [ "cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g=" ];
+  };
+```
+
+and `nixos-rebuild` downloads ReFineID pre-built instead of
+compiling it.
 
 ## Fresh machine, shortest path
 
