@@ -205,6 +205,8 @@ impl SignDocumentArgs {
         let mut timestamp_authorities: Vec<String> = Vec::new();
         let mut require_qualified_timestamps = false;
         let mut no_timestamp = false;
+        let mut no_long_term = false;
+        let mut no_archive = false;
         let mut long_term = false;
         let mut archive = false;
 
@@ -238,6 +240,8 @@ impl SignDocumentArgs {
                     }
                 }
                 "--no-timestamp" => no_timestamp = true,
+                "--no-long-term" => no_long_term = true,
+                "--no-archive" => no_archive = true,
                 "--long-term" => long_term = true,
                 "--archive" => archive = true,
                 other => {
@@ -263,6 +267,8 @@ impl SignDocumentArgs {
             timestamp_authorities,
             require_qualified_timestamps,
             no_timestamp,
+            no_long_term,
+            no_archive,
         )
     }
 
@@ -290,6 +296,8 @@ impl SignDocumentArgs {
         mut timestamp_authorities: Vec<String>,
         require_qualified_timestamps: bool,
         no_timestamp: bool,
+        no_long_term: bool,
+        no_archive: bool,
     ) -> Result<Self, ArgParseError> {
         if no_timestamp && !timestamp_authorities.is_empty() {
             return Err(ArgParseError::BadValue {
@@ -344,23 +352,16 @@ impl SignDocumentArgs {
                 });
             }
         };
-        // An archive timestamp is only meaningful over embedded
-        // evidence, so it implies the level below it rather than
-        // making the operator ask for both.
-        let long_term = long_term || archive;
+        let (long_term, archive) = resolve_levels(
+            format,
+            long_term,
+            archive,
+            no_timestamp,
+            no_long_term,
+            no_archive,
+        )?;
         let require_qualified_timestamps = require_qualified_timestamps || long_term;
         check_level_is_reachable(long_term, timestamp_authorities.len())?;
-        if archive && !matches!(format, Format::Pades | Format::AsicECades) {
-            return Err(ArgParseError::BadValue {
-                cmd: CMD,
-                flag: "--archive",
-                value: format!("{format:?}"),
-                reason: "archive timestamps are built for pades and asice-cades; the CAdES and \
-                         XAdES archive attributes cover a different construction that is not \
-                         implemented"
-                    .to_owned(),
-            });
-        }
         let can = can_raw
             .map(|raw| {
                 Can::new(&raw).map_err(|e| ArgParseError::BadValue {
@@ -468,6 +469,60 @@ fn report_outcome(
 /// rather than a weaker signature. Caught before the PIN prompt: a PIN
 /// typed for a command that was never going to run is a PIN typed for
 /// nothing.
+/// Apply the level defaults and their opt-outs.
+///
+/// Signing defaults to the highest level the format supports: LTA for
+/// pades and asice-cades, LT for the rest. Each opt-out steps one
+/// level down; an archive timestamp is only meaningful over embedded
+/// evidence, so archive implies LT. Returns `(long_term, archive)`.
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "one parameter per flag; bundling them into a struct would name the same fields twice"
+)]
+fn resolve_levels(
+    format: Format,
+    long_term: bool,
+    archive: bool,
+    no_timestamp: bool,
+    no_long_term: bool,
+    no_archive: bool,
+) -> Result<(bool, bool), ArgParseError> {
+    if no_long_term && (long_term || archive) {
+        return Err(ArgParseError::BadValue {
+            cmd: CMD,
+            flag: "--no-long-term",
+            value: if archive { "--archive" } else { "--long-term" }.to_owned(),
+            reason: "choose a level or its opt-out, not both".to_owned(),
+        });
+    }
+    if no_archive && archive {
+        return Err(ArgParseError::BadValue {
+            cmd: CMD,
+            flag: "--no-archive",
+            value: "--archive".to_owned(),
+            reason: "choose a level or its opt-out, not both".to_owned(),
+        });
+    }
+    if archive && !matches!(format, Format::Pades | Format::AsicECades) {
+        return Err(ArgParseError::BadValue {
+            cmd: CMD,
+            flag: "--archive",
+            value: format!("{format:?}"),
+            reason: "archive timestamps are built for pades and asice-cades; the CAdES and \
+                     XAdES archive attributes cover a different construction that is not \
+                     implemented"
+                .to_owned(),
+        });
+    }
+    let archive = if no_timestamp || no_long_term || no_archive {
+        false
+    } else {
+        archive || matches!(format, Format::Pades | Format::AsicECades)
+    };
+    let long_term = long_term || archive || !(no_timestamp || no_long_term);
+    Ok((long_term, archive))
+}
+
 fn check_level_is_reachable(long_term: bool, timestamps: usize) -> Result<(), ArgParseError> {
     if long_term && timestamps == 0 {
         return Err(ArgParseError::BadValue {
@@ -618,6 +673,64 @@ mod tests {
             &a.timestamp_authorities,
             &vec![DEFAULT_TIMESTAMP_AUTHORITY.to_owned()],
             "default authority",
+        )?;
+        // The default is the highest level the format supports.
+        check(&a.archive, &true, "pades defaults to LTA")?;
+        check(&a.long_term, &true, "archive implies LT")
+    }
+
+    #[test]
+    fn formats_without_archive_support_default_to_lt() -> TestResult {
+        let a = SignDocumentArgs::parse(argv(&[
+            "--format",
+            "asice",
+            "--in",
+            "/tmp/d.odt",
+            "--out",
+            "/tmp/s.asice",
+        ]))?;
+        check(&a.archive, &false, "no archive construction for XAdES")?;
+        check(&a.long_term, &true, "still LT")
+    }
+
+    #[test]
+    fn opt_outs_step_down_one_level_each() -> TestResult {
+        let base = [
+            "--format",
+            "pades",
+            "--in",
+            "/tmp/d.pdf",
+            "--out",
+            "/tmp/s.pdf",
+        ];
+        let mut with_no_archive = base.to_vec();
+        with_no_archive.push("--no-archive");
+        let a = SignDocumentArgs::parse(argv(&with_no_archive))?;
+        check(&a.archive, &false, "LT")?;
+        check(&a.long_term, &true, "LT keeps evidence")?;
+        let mut with_no_long_term = base.to_vec();
+        with_no_long_term.push("--no-long-term");
+        let a = SignDocumentArgs::parse(argv(&with_no_long_term))?;
+        check(&a.archive, &false, "T has no archive")?;
+        check(&a.long_term, &false, "T has no evidence")?;
+        check(&a.timestamp_authorities.len(), &1, "T is still attested")
+    }
+
+    #[test]
+    fn a_level_and_its_opt_out_conflict() -> TestResult {
+        let base = [
+            "--format",
+            "pades",
+            "--in",
+            "/tmp/d.pdf",
+            "--out",
+            "/tmp/s.pdf",
+        ];
+        let mut conflicting = base.to_vec();
+        conflicting.extend(["--no-long-term", "--archive"]);
+        check_true(
+            SignDocumentArgs::parse(argv(&conflicting)).is_err(),
+            "a level and its opt-out cannot both be asked for",
         )
     }
 
@@ -847,7 +960,7 @@ mod tests {
 
     #[test]
     fn long_term_requires_qualification_even_for_a_direct_url() -> TestResult {
-        let baseline = SignDocumentArgs::parse(argv(&[
+        let level_t = SignDocumentArgs::parse(argv(&[
             "--format",
             "pades",
             "--in",
@@ -856,13 +969,14 @@ mod tests {
             "/o.pdf",
             "--timestamp",
             "https://tsa.example/tsa",
+            "--no-long-term",
         ]))?;
         check_true(
-            !baseline.require_qualified_timestamps,
+            !level_t.require_qualified_timestamps,
             "direct level-T URL leaves trust policy to caller",
         )?;
 
-        let long_term = SignDocumentArgs::parse(argv(&[
+        let defaulted = SignDocumentArgs::parse(argv(&[
             "--format",
             "pades",
             "--in",
@@ -871,11 +985,10 @@ mod tests {
             "/o.pdf",
             "--timestamp",
             "https://tsa.example/tsa",
-            "--long-term",
         ]))?;
         check_true(
-            long_term.require_qualified_timestamps,
-            "LT requires an authenticated timestamp trust decision",
+            defaulted.require_qualified_timestamps,
+            "the LT/LTA default requires an authenticated timestamp trust decision",
         )
     }
 

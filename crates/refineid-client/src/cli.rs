@@ -353,11 +353,9 @@ subcommands:
         --location T PAdES /Location
         --reader S   narrow to readers whose name contains S
         --can NNNNNN as for sign-auth
-        --long-term  embed the certificate chain and revocation
-                     evidence (level LT). Needs --timestamp.
-        --archive    add a document timestamp over the finished file
-                     (level LTA); implies --long-term. pades and
-                     asice-cades only.
+      Signs at the highest level the format supports: LTA (embedded
+      evidence plus archive timestamp) for pades and asice-cades,
+      LT (embedded evidence) for the rest.
         --timestamp U
                      RFC 3161 timestamp authority URL, or a named set.
                      Default: http://timestamp.sectigo.com/qualified.
@@ -365,12 +363,11 @@ subcommands:
                      skipped, and signing fails when none remains.
                      --timestamp eu-qualified uses public EU endpoints
                      and keeps only signers currently granted as
-                     qualified on the authenticated EU trusted lists;
-                     LT/LTA applies the same check to a direct URL.
-        --no-timestamp
-                     sign without any timestamp authority; the
-                     signature time is the signer's own claim
-                     (level B).
+                     qualified on the authenticated EU trusted lists.
+        --no-archive    stop at level LT: no archive timestamp
+        --no-long-term  stop at level T: no embedded evidence
+        --no-timestamp  sign at level B: no authority contacted, the
+                        signature time is the signer's own claim
 
   card decrypt-auth --in PATH --out PATH
       PIN1 + RSA-PKCS1v1.5 decrypt with the auth key.
