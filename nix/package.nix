@@ -36,12 +36,19 @@ let
 
     src = lib.cleanSourceWith {
       src = ../.;
+      # Documentation is excluded so a doc-only commit does not
+      # recompile the workspace.
       filter =
         path: type:
         let
           base = baseNameOf path;
         in
-        base != "target" && base != "result" && base != ".git" && base != "nix";
+        base != "target"
+        && base != "result"
+        && base != ".git"
+        && base != "nix"
+        && base != "doc"
+        && !lib.hasSuffix ".md" base;
     };
 
     strictDeps = true;
