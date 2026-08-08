@@ -194,6 +194,79 @@ impl VerifyPukProbe {
     }
 }
 
+/// VERIFY of the organization card's unblock credential itself
+/// (its PIN PUK security data object), which is the precondition
+/// the S4-2 v4.0 SDO tables set for RESET RETRY COUNTER (SE#03).
+///
+/// The citizen card never verifies its PUK separately -- the
+/// resetting code rides inside RESET RETRY COUNTER's data field
+/// there.
+#[derive(Debug, Clone)]
+pub struct VerifyPuk {
+    /// Which reference numbering names the unblock credential.
+    pub scheme: PinReferenceScheme,
+    /// The unblock credential at its typed length.
+    pub block: Vec<u8>,
+}
+
+impl VerifyPuk {
+    /// Serialise into the wire APDU (`00 20 00 <puk ref> Lc <code>`).
+    #[must_use]
+    pub fn into_apdu(self) -> CommandApdu {
+        let Ok(lc) = u8::try_from(self.block.len()) else {
+            unreachable!("VERIFY PUK block exceeds short-form Lc")
+        };
+        let mut out = Vec::with_capacity(self.block.len().saturating_add(5));
+        out.push(ApduClass::Plain.as_byte());
+        out.push(Verify::INS);
+        out.push(VerifyMode::Verify.as_p1());
+        out.push(self.scheme.puk_reference());
+        out.push(lc);
+        out.extend_from_slice(&self.block);
+        CommandApdu::new(out)
+    }
+}
+
+/// The organization card's `RESET RETRY COUNTER` form.
+///
+/// The unblock credential was verified beforehand ([`VerifyPuk`]),
+/// and the data field carries only the new PIN (Idemia
+/// organizational cards specification §4.1.6, P1 `02` = new
+/// reference data present).
+#[derive(Debug, Clone)]
+pub struct ResetRetryCounterVerifiedPuk {
+    /// Which PIN slot the unblock targets.
+    pub target_slot: PinSlot,
+    /// Which reference numbering maps the target to its P2 byte.
+    pub scheme: PinReferenceScheme,
+    /// The new PIN at its typed length.
+    pub new_block: Vec<u8>,
+}
+
+impl ResetRetryCounterVerifiedPuk {
+    /// P1: new reference data present (Idemia organizational cards
+    /// specification §4.1.6).
+    pub const NEW_REFERENCE_DATA_P1: u8 = 0x02;
+
+    /// Serialise into the wire APDU (`00 2C 02 <p2> Lc <new pin>`).
+    #[must_use]
+    pub fn into_apdu(self) -> CommandApdu {
+        let Ok(lc) = u8::try_from(self.new_block.len()) else {
+            unreachable!("RESET RETRY COUNTER new PIN exceeds short-form Lc")
+        };
+        let mut out = Vec::with_capacity(self.new_block.len().saturating_add(5));
+        out.extend_from_slice(&[
+            ResetRetryCounter::CLA,
+            ResetRetryCounter::INS,
+            Self::NEW_REFERENCE_DATA_P1,
+            self.scheme.p2_reference(self.target_slot),
+            lc,
+        ]);
+        out.extend_from_slice(&self.new_block);
+        CommandApdu::new(out)
+    }
+}
+
 /// ISO 7816-4 `CHANGE REFERENCE DATA` (`INS=0x24 P1=0x00`)
 /// with the current and new PINs concatenated, each padded to
 /// the slot's stored length.

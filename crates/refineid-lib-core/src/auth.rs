@@ -92,6 +92,18 @@ pub const PIN1_MIN_LENGTH: usize = 4;
 /// Minimum PIN2 length per FINEID S1 v4.2 §3.5.2: 6 digits.
 pub const PIN2_MIN_LENGTH: usize = 6;
 
+/// Organization-card typed-length ceiling for every credential.
+///
+/// FINEID S4-2 v4.0 §4.3 caps PIN AUTH, PIN SIG and PIN PUK at
+/// eight characters. The card stores each credential at its typed
+/// length -- its EF.AOD publishes no padding, and FINEID S1 v3.0
+/// §3.5.1.1 requires the entered length to equal the stored one,
+/// so a padded block fails the comparison and spends a retry.
+pub const ORGANIZATIONAL_PIN_MAX_LENGTH: usize = 8;
+
+/// Organization-card credential floor (S4-2 v4.0 §4.3: 04 Min).
+pub const ORGANIZATIONAL_PIN_MIN_LENGTH: usize = 4;
+
 /// PUK stored-length: 12 bytes, padded with [`PIN_PAD_BYTE`].
 ///
 /// The PUK uses the same 12-byte padded slot as the PIN1 / PIN2
@@ -464,30 +476,25 @@ pub trait PinOps: CardTransport {
     where
         Self: Sized,
     {
-        let pin_ascii = pin.as_bytes();
-        let stored = slot.stored_length();
-        let min = slot.min_length();
-        PinPolicyCheck::validate_ascii(pin_ascii, min, stored)?;
-        let mut padded = vec![PIN_PAD_BYTE; stored];
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "validate_ascii above proves pin_ascii.len() in [min, stored]; padded was allocated at length stored, so padded[..pin_ascii.len()] is in-bounds."
-        )]
-        padded[..pin_ascii.len()].copy_from_slice(pin_ascii);
+        let mut block = credential_block(
+            scheme,
+            slot.min_length(),
+            slot.stored_length(),
+            pin.as_bytes(),
+        )?;
         let apdu = commands::Verify {
             class: ApduClass::Plain,
             mode: commands::VerifyMode::Verify,
             slot,
             scheme,
-            data: commands::VerifyData::PinBlock(padded.clone()),
+            data: commands::VerifyData::PinBlock(block.clone()),
         }
         .into_apdu();
         let r = self
             .transmit(apdu.as_bytes())
             .map_err(AuthError::Transport)?;
-        // Wipe the padded buffer; it still carries the typed PIN
-        // bytes in the leading slice.
-        zeroize::Zeroize::zeroize(&mut padded);
+        // Wipe the block; it carries the typed PIN bytes.
+        zeroize::Zeroize::zeroize(&mut block);
         Ok(classify_verify_sw(r.status_word()))
     }
 
@@ -535,34 +542,25 @@ pub trait PinOps: CardTransport {
     where
         Self: Sized,
     {
-        let current = current_pin.as_bytes();
-        let new = new_pin.as_bytes();
         let stored = slot.stored_length();
         let min = slot.min_length();
-        PinPolicyCheck::validate_ascii(current, min, stored)?;
-        PinPolicyCheck::validate_ascii(new, min, stored)?;
-
-        let mut padded = vec![PIN_PAD_BYTE; stored.saturating_mul(2)];
-        #[expect(
-            clippy::indexing_slicing,
-            clippy::arithmetic_side_effects,
-            reason = "validate_ascii above proves current.len() and new.len() in [min, stored]; padded was allocated at length 2*stored, so the index ranges are in-bounds and stored+new.len() <= 2*stored cannot overflow."
-        )]
-        {
-            padded[..current.len()].copy_from_slice(current);
-            padded[stored..stored + new.len()].copy_from_slice(new);
-        }
+        let mut current_block = credential_block(scheme, min, stored, current_pin.as_bytes())?;
+        let mut new_block = credential_block(scheme, min, stored, new_pin.as_bytes())?;
+        let mut pair = current_block.clone();
+        pair.extend_from_slice(&new_block);
 
         let apdu = commands::ChangeReferenceData {
             slot,
             scheme,
-            padded_pair: padded.clone(),
+            padded_pair: pair.clone(),
         }
         .into_apdu();
         let r = self
             .transmit(apdu.as_bytes())
             .map_err(AuthError::Transport)?;
-        zeroize::Zeroize::zeroize(&mut padded);
+        zeroize::Zeroize::zeroize(&mut current_block);
+        zeroize::Zeroize::zeroize(&mut new_block);
+        zeroize::Zeroize::zeroize(&mut pair);
         Ok(classify_change_pin_sw(r.status_word()))
     }
 
@@ -617,36 +615,95 @@ pub trait PinOps: CardTransport {
     where
         Self: Sized,
     {
-        let puk_ascii = puk.as_bytes();
-        let new_ascii = new_pin.as_bytes();
-        let target_min = target.min_length();
-        let target_stored = target.stored_length();
-        PinPolicyCheck::validate_ascii(puk_ascii, PUK_MIN_LENGTH, PUK_MAX_LENGTH)?;
-        PinPolicyCheck::validate_ascii(new_ascii, target_min, target_stored)?;
+        match scheme {
+            PinReferenceScheme::Citizen => {
+                let puk_ascii = puk.as_bytes();
+                let new_ascii = new_pin.as_bytes();
+                let target_min = target.min_length();
+                let target_stored = target.stored_length();
+                PinPolicyCheck::validate_ascii(puk_ascii, PUK_MIN_LENGTH, PUK_MAX_LENGTH)?;
+                PinPolicyCheck::validate_ascii(new_ascii, target_min, target_stored)?;
 
-        let mut padded = vec![PIN_PAD_BYTE; PUK_STORED_LENGTH.saturating_add(target_stored)];
-        #[expect(
-            clippy::indexing_slicing,
-            clippy::arithmetic_side_effects,
-            reason = "validate_ascii above proves puk_ascii.len() <= PUK_STORED_LENGTH and new_ascii.len() <= target_stored; padded was allocated at PUK_STORED_LENGTH+target_stored, so all index ranges are in-bounds."
-        )]
-        {
-            padded[..puk_ascii.len()].copy_from_slice(puk_ascii);
-            padded[PUK_STORED_LENGTH..PUK_STORED_LENGTH + new_ascii.len()]
-                .copy_from_slice(new_ascii);
-        }
+                let mut padded =
+                    vec![PIN_PAD_BYTE; PUK_STORED_LENGTH.saturating_add(target_stored)];
+                #[expect(
+                    clippy::indexing_slicing,
+                    clippy::arithmetic_side_effects,
+                    reason = "validate_ascii above proves puk_ascii.len() <= PUK_STORED_LENGTH and new_ascii.len() <= target_stored; padded was allocated at PUK_STORED_LENGTH+target_stored, so all index ranges are in-bounds."
+                )]
+                {
+                    padded[..puk_ascii.len()].copy_from_slice(puk_ascii);
+                    padded[PUK_STORED_LENGTH..PUK_STORED_LENGTH + new_ascii.len()]
+                        .copy_from_slice(new_ascii);
+                }
 
-        let apdu = commands::ResetRetryCounter {
-            target_slot: target,
-            scheme,
-            padded_pair: padded.clone(),
+                let apdu = commands::ResetRetryCounter {
+                    target_slot: target,
+                    scheme,
+                    padded_pair: padded.clone(),
+                }
+                .into_apdu();
+                let r = self
+                    .transmit(apdu.as_bytes())
+                    .map_err(AuthError::Transport)?;
+                zeroize::Zeroize::zeroize(&mut padded);
+                Ok(classify_reset_retry_sw(r.status_word()))
+            }
+            PinReferenceScheme::Organizational => {
+                // The S4-2 v4.0 SDO tables gate RESET RETRY COUNTER
+                // on SE#03: the unblock credential is verified as
+                // its own object first, then the reset carries only
+                // the new PIN (Idemia organizational cards
+                // specification §4.1.6, P1 02).
+                let mut code_block = credential_block(
+                    scheme,
+                    ORGANIZATIONAL_PIN_MIN_LENGTH,
+                    ORGANIZATIONAL_PIN_MAX_LENGTH,
+                    puk.as_bytes(),
+                )?;
+                let mut new_block = credential_block(
+                    scheme,
+                    target.min_length(),
+                    ORGANIZATIONAL_PIN_MAX_LENGTH,
+                    new_pin.as_bytes(),
+                )?;
+                let verify = commands::VerifyPuk {
+                    scheme,
+                    block: code_block.clone(),
+                }
+                .into_apdu();
+                let verified = self
+                    .transmit(verify.as_bytes())
+                    .map_err(AuthError::Transport)?;
+                zeroize::Zeroize::zeroize(&mut code_block);
+                match classify_verify_sw(verified.status_word()) {
+                    VerifyOutcome::Ok => {}
+                    VerifyOutcome::WrongPin { retries_left } => {
+                        zeroize::Zeroize::zeroize(&mut new_block);
+                        return Ok(UnblockOutcome::WrongPuk { retries_left });
+                    }
+                    VerifyOutcome::Locked => {
+                        zeroize::Zeroize::zeroize(&mut new_block);
+                        return Ok(UnblockOutcome::PukLocked);
+                    }
+                    VerifyOutcome::Other(sw) => {
+                        zeroize::Zeroize::zeroize(&mut new_block);
+                        return Ok(UnblockOutcome::Other(sw));
+                    }
+                }
+                let reset = commands::ResetRetryCounterVerifiedPuk {
+                    target_slot: target,
+                    scheme,
+                    new_block: new_block.clone(),
+                }
+                .into_apdu();
+                let r = self
+                    .transmit(reset.as_bytes())
+                    .map_err(AuthError::Transport)?;
+                zeroize::Zeroize::zeroize(&mut new_block);
+                Ok(classify_reset_retry_sw(r.status_word()))
+            }
         }
-        .into_apdu();
-        let r = self
-            .transmit(apdu.as_bytes())
-            .map_err(AuthError::Transport)?;
-        zeroize::Zeroize::zeroize(&mut padded);
-        Ok(classify_reset_retry_sw(r.status_word()))
     }
 
     /// Convenience for the PIN1 slot (`target = PinSlot::Pin1`).
@@ -1008,6 +1065,37 @@ pub const fn classify_change_pin_sw(sw: StatusWord) -> ChangePinOutcome {
 // `pin_status` is a method on [`PinOps`]. See the trait definition
 // above.
 
+/// One credential's wire block under `scheme`.
+///
+/// The citizen card compares a block padded to the stored length
+/// with [`PIN_PAD_BYTE`]; the organization card compares the typed
+/// digits at their own length, because its EF.AOD publishes no
+/// padding and the S1 v3.0 §3.5.1.1 rule makes any other length a
+/// failed -- and counted -- comparison.
+fn credential_block<TE>(
+    scheme: PinReferenceScheme,
+    minimum: usize,
+    stored: usize,
+    ascii: &[u8],
+) -> Result<Vec<u8>, AuthError<TE>> {
+    match scheme {
+        PinReferenceScheme::Citizen => {
+            PinPolicyCheck::validate_ascii(ascii, minimum, stored)?;
+            let mut padded = vec![PIN_PAD_BYTE; stored];
+            #[expect(
+                clippy::indexing_slicing,
+                reason = "validate_ascii above proves ascii.len() in [minimum, stored]; padded was allocated at length stored, so padded[..ascii.len()] is in-bounds."
+            )]
+            padded[..ascii.len()].copy_from_slice(ascii);
+            Ok(padded)
+        }
+        PinReferenceScheme::Organizational => {
+            PinPolicyCheck::validate_ascii(ascii, minimum, ORGANIZATIONAL_PIN_MAX_LENGTH)?;
+            Ok(ascii.to_vec())
+        }
+    }
+}
+
 /// Send the counter-safe PIN1 VERIFY status probe under `scheme`
 /// and hand back the raw status word for scheme resolution.
 fn reference_probe_sw<T: CardTransport>(
@@ -1162,12 +1250,6 @@ mod tests {
     const SW2_REFERENCE_NOT_FOUND: u8 = 0x88;
     /// SW2: incorrect P1-P2 (with SW1 `6A`).
     const SW2_INCORRECT_P1_P2: u8 = 0x86;
-    /// Padding byte of the PIN block.
-    const PAD_BYTE: u8 = 0x00;
-    /// Lc of one padded PIN block.
-    const PIN_BLOCK_LENGTH: u8 = 0x0C;
-    /// Lc of two padded PIN blocks (unblock: PUK then new PIN).
-    const PADDED_PAIR_LENGTH: u8 = 0x18;
 
     fn citizen_pin1_probe() -> Vec<u8> {
         vec![
@@ -1254,16 +1336,19 @@ mod tests {
     }
 
     #[test]
-    fn organizational_pin1_verify_uses_pin_auth_reference() {
+    fn organizational_pin1_verify_sends_typed_length() {
+        // The organization card compares the typed digits at their
+        // own length: no padding, Lc = digit count (S1 v3.0
+        // §3.5.1.1; the card's EF.AOD publishes no padding).
+        const TYPED_LENGTH: u8 = 0x04;
         let mut expected = vec![
             PLAIN_CLASS,
             VERIFY_INSTRUCTION,
             VERIFY_MODE,
             PIN1_REFERENCE_ORGANIZATIONAL,
-            PIN_BLOCK_LENGTH,
+            TYPED_LENGTH,
         ];
         expected.extend_from_slice(b"1234");
-        expected.extend_from_slice(&[PAD_BYTE; 8]);
         let mut tx = MockTx {
             expected,
             response: ok(),
@@ -1281,16 +1366,16 @@ mod tests {
     }
 
     #[test]
-    fn organizational_pin2_verify_uses_pin_sig_reference() {
+    fn organizational_pin2_verify_sends_typed_length() {
+        const TYPED_LENGTH: u8 = 0x06;
         let mut expected = vec![
             PLAIN_CLASS,
             VERIFY_INSTRUCTION,
             VERIFY_MODE,
             PIN2_REFERENCE_ORGANIZATIONAL,
-            PIN_BLOCK_LENGTH,
+            TYPED_LENGTH,
         ];
         expected.extend_from_slice(b"123456");
-        expected.extend_from_slice(&[PAD_BYTE; 6]);
         let mut tx = MockTx {
             expected,
             response: ok(),
@@ -1308,27 +1393,69 @@ mod tests {
     }
 
     #[test]
-    fn organizational_unblock_targets_pin_auth_reference() {
-        // RESET RETRY COUNTER: P2 names the target PIN in the
-        // organizational numbering; the unblock credential rides
-        // in the data field, 8 digits padded to 12.
-        const RESET_RETRY_COUNTER_INSTRUCTION: u8 = 0x2C;
-        const RESET_AND_REPLACE_MODE: u8 = 0x00;
+    fn organizational_change_sends_bare_concatenation() {
+        // CHANGE REFERENCE DATA on the organization card: current
+        // and new PIN concatenated at their typed lengths (Idemia
+        // organizational cards specification §4.1.7, boundaries
+        // 2*Lmin..2*Lmax).
+        const CHANGE_REFERENCE_DATA_INSTRUCTION: u8 = 0x24;
+        const REPLACE_MODE: u8 = 0x00;
+        const PAIR_LENGTH: u8 = 0x0A;
         let mut expected = vec![
             PLAIN_CLASS,
-            RESET_RETRY_COUNTER_INSTRUCTION,
-            RESET_AND_REPLACE_MODE,
+            CHANGE_REFERENCE_DATA_INSTRUCTION,
+            REPLACE_MODE,
             PIN1_REFERENCE_ORGANIZATIONAL,
-            PADDED_PAIR_LENGTH,
+            PAIR_LENGTH,
         ];
-        expected.extend_from_slice(b"12345678");
-        expected.extend_from_slice(&[PAD_BYTE; 4]);
         expected.extend_from_slice(b"1234");
-        expected.extend_from_slice(&[PAD_BYTE; 8]);
+        expected.extend_from_slice(b"567890");
         let mut tx = MockTx {
             expected,
             response: ok(),
             seen: false,
+        };
+        let outcome = tx
+            .change_pin_with_scheme(
+                PinSlot::Pin1,
+                PinReferenceScheme::Organizational,
+                pb(b"1234"),
+                pb(b"567890"),
+            )
+            .expect("organizational change succeeds");
+        assert_eq!(outcome, ChangePinOutcome::Ok);
+        assert!(tx.seen);
+    }
+
+    #[test]
+    fn organizational_unblock_verifies_puk_then_resets() {
+        // The organizational unblock is two commands: VERIFY of the
+        // PIN PUK object itself (S4-2 v4.0 SE#03), then RESET RETRY
+        // COUNTER with P1=02 carrying only the new PIN (Idemia
+        // organizational cards specification §4.1.6).
+        const RESET_RETRY_COUNTER_INSTRUCTION: u8 = 0x2C;
+        const NEW_REFERENCE_DATA_MODE: u8 = 0x02;
+        const CODE_LENGTH: u8 = 0x08;
+        const NEW_PIN_LENGTH: u8 = 0x04;
+        let mut verify_step = vec![
+            PLAIN_CLASS,
+            VERIFY_INSTRUCTION,
+            VERIFY_MODE,
+            PUK_REFERENCE_ORGANIZATIONAL,
+            CODE_LENGTH,
+        ];
+        verify_step.extend_from_slice(b"12345678");
+        let mut reset_step = vec![
+            PLAIN_CLASS,
+            RESET_RETRY_COUNTER_INSTRUCTION,
+            NEW_REFERENCE_DATA_MODE,
+            PIN1_REFERENCE_ORGANIZATIONAL,
+            NEW_PIN_LENGTH,
+        ];
+        reset_step.extend_from_slice(b"1234");
+        let mut tx = SteppedTx {
+            script: vec![(verify_step, ok()), (reset_step, ok())],
+            cursor: 0,
         };
         let outcome = tx
             .reset_retry_counter_with_scheme(
@@ -1339,7 +1466,41 @@ mod tests {
             )
             .expect("organizational unblock succeeds");
         assert_eq!(outcome, UnblockOutcome::Ok);
-        assert!(tx.seen);
+        assert_eq!(tx.cursor, tx.script.len());
+    }
+
+    #[test]
+    fn organizational_unblock_stops_on_wrong_code() {
+        // A refused unblock credential ends the flow before any
+        // RESET RETRY COUNTER goes out.
+        const CODE_LENGTH: u8 = 0x08;
+        let mut verify_step = vec![
+            PLAIN_CLASS,
+            VERIFY_INSTRUCTION,
+            VERIFY_MODE,
+            PUK_REFERENCE_ORGANIZATIONAL,
+            CODE_LENGTH,
+        ];
+        verify_step.extend_from_slice(b"12345678");
+        let mut tx = SteppedTx {
+            script: vec![(verify_step, sw(SW1_RETRY_COUNTER, SW2_THREE_RETRIES))],
+            cursor: 0,
+        };
+        let outcome = tx
+            .reset_retry_counter_with_scheme(
+                PinSlot::Pin1,
+                PinReferenceScheme::Organizational,
+                pb(b"12345678"),
+                pb(b"1234"),
+            )
+            .expect("refusal classifies, does not error");
+        assert_eq!(
+            outcome,
+            UnblockOutcome::WrongPuk {
+                retries_left: PinRetries::from_nibble(3).expect("valid retry nibble")
+            }
+        );
+        assert_eq!(tx.cursor, tx.script.len());
     }
 
     #[test]
