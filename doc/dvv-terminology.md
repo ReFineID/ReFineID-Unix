@@ -72,8 +72,14 @@ activation; the second two are issued by DVV.
 > Treat the two names as distinct in **user-facing strings,
 > audit logs, and prose** -- that is how DVV communicates and
 > what citizens see on the letter and on dvv.fi. Don't assert
-> they're separate hardware mechanisms in committed prose;
-> we don't have an S4-2 v4.0 spec confirming that either way.
+> they're separate hardware mechanisms in committed prose.
+> FINEID S4-2 v4.0 (the organizational profile) settles the
+> question for that line only: one PIN PUK security data object
+> (`12`) whose EF.AOD label is "aktivointitunnusluku", with
+> change reference data and reset retry counter both Never
+> (sections 4.2-4.3) -- one mechanism, one counter, never
+> replaceable. The citizen line's S4-1 stays silent, so the
+> caution stands there.
 >
 > refineid uses the activation PIN only for factory activation and
 > uses the PUK for `card unblock-pin1` / `card unblock-pin2`.

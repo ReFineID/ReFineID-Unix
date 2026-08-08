@@ -188,15 +188,26 @@ signal.)
 
 ### Social welfare / organizational cards
 
-These are a different card category from citizen eID and use
-a different FINEID specification line (`S1`). refineid does
-not yet support them.
+These are a different card category from citizen eID: the card
+application follows the FINEID `S1` specification line and the
+electrical profile follows `S4-2` ("Implementation Profile 2 for
+Organizational Usage"). The Cosmo X generation is supported for
+`card` readout and signing: the certificate slot table already
+covers its layout (auth `3F00/4331`, signature `3F00/5016/4332`,
+root `3F00/4334`; the issuing CA EFs are not readable on the
+card), and the credential references resolve at runtime via
+`PinOps::resolve_pin_reference_scheme` -- S4-2 v4.0 numbers its
+credentials by security-data-object identifier (PIN AUTH `03`,
+PIN SIG `04`, PIN PUK `12`, per section 4.2) where the citizen
+line uses S1 v4.2 section 3.5.2 references (`11`/`82`/`83`).
+PIN management (`card pin`) still gates on ATR model
+classification, which does not yet name the Cosmo X.
 
-| Card type                              | Card vendor and product            | FINEID specification | Production window         | Status                          |
-|----------------------------------------|------------------------------------|----------------------|---------------------------|---------------------------------|
-| Social welfare and organizational      | Idemia Cosmo X                     | S1 v5.0              | ~2025 ->                  | Maybe later -- not yet in scope |
-| Social welfare and organizational      | Idemia ID.me IDeal Citiz 2.17-i    | S1 v4.0              | 2019-12-17 ->             | Not in scope                    |
-| Social welfare and organizational      | Oberthur Cosmo v7 IAS-ECC          | (no FINEID spec id)  | ~2010 - 2019-12-16        | All expired                     |
+| Card type                              | Card vendor and product            | FINEID specification | Production window         | Status                            |
+|----------------------------------------|------------------------------------|----------------------|---------------------------|-----------------------------------|
+| Social welfare and organizational      | Idemia Cosmo X                     | S1 v5.0 / S4-2 v4.0  | ~2025 ->                  | Readout + sign; pin gated on ATR  |
+| Social welfare and organizational      | Idemia ID.me IDeal Citiz 2.17-i    | S1 v4.0              | 2019-12-17 ->             | Not in scope                      |
+| Social welfare and organizational      | Oberthur Cosmo v7 IAS-ECC          | (no FINEID spec id)  | ~2010 - 2019-12-16        | All expired                       |
 
 ### Health care / organizational cards
 

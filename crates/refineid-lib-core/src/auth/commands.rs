@@ -22,16 +22,19 @@
 //! typed values.
 //!
 //! All four commands share the ISO 7816-4 §7.5 PIN-management
-//! shape `CLA INS P1 P2 Lc <data>`. P2 always comes from a
-//! [`PinSlot`] (compile-time-known PIN1 vs PIN2 distinction); Lc
-//! and `data` are filled by each command's role.
+//! shape `CLA INS P1 P2 Lc <data>`. P2 comes from a [`PinSlot`]
+//! mapped through a [`PinReferenceScheme`] (citizen S1 v4.2 vs
+//! organizational S4-2 v4.0 numbering); Lc and `data` are filled
+//! by each command's role.
 //!
 //! [`PinSlot`]: crate::auth::PinSlot
+//! [`PinReferenceScheme`]: crate::auth::PinReferenceScheme
 
 use crate::apdu::iso7816::ApduClass;
 use crate::apdu::status_word::PinRetries;
 use crate::auth::{
-    CredentialPolicyCounters, PUK_REFERENCE_PKCS15, PinSlot, UnblockingCounter, UsageCounter,
+    CredentialPolicyCounters, PUK_REFERENCE_PKCS15, PinReferenceScheme, PinSlot, UnblockingCounter,
+    UsageCounter,
 };
 use crate::transport::CommandApdu;
 
@@ -100,8 +103,8 @@ pub enum VerifyData {
 ///   (`0Ch`).
 /// - `INS`: fixed at `20h`.
 /// - `P1`: [`VerifyMode`] -- Verify (`00h`) or Unverify (`FFh`).
-/// - `P2`: PIN reference. PIN1 (`11h` global) / PIN2 (`82h`
-///   local) via [`PinSlot::p2_reference`].
+/// - `P2`: PIN reference for the slot under the card's numbering,
+///   via [`PinReferenceScheme::p2_reference`].
 /// - `Lc` + `Data`: see [`VerifyData`].
 /// - `Le`: empty.
 ///
@@ -116,6 +119,8 @@ pub struct Verify {
     pub mode: VerifyMode,
     /// P2 selector: which PIN slot.
     pub slot: PinSlot,
+    /// Which reference numbering maps the slot to its P2 byte.
+    pub scheme: PinReferenceScheme,
     /// Lc + Data: empty (probe) or padded PIN bytes.
     pub data: VerifyData,
 }
@@ -148,13 +153,44 @@ impl Verify {
         out.push(self.class.as_byte());
         out.push(Self::INS);
         out.push(self.mode.as_p1());
-        out.push(self.slot.p2_reference());
+        out.push(self.scheme.p2_reference(self.slot));
         // §3.5.1.1: Lc=00h with no Data is the probe form. We
         // always emit Lc (00 for probe, len for PinBlock) so
         // the wire is a valid short APDU.
         out.push(lc);
         out.extend_from_slice(pin_bytes);
         CommandApdu::new(out)
+    }
+}
+
+/// Counter-safe VERIFY status probe against the unblock
+/// credential's own reference.
+///
+/// The organizational numbering exposes its PIN PUK security data
+/// object to VERIFY like any PIN (FINEID S4-2 v4.0 §4.3.2), so the
+/// empty-Lc probe reads its retry counter. The citizen numbering
+/// has no PUK VERIFY surface -- its counter is read through the
+/// [`GetPukInfo`] container instead.
+#[derive(Debug, Clone, Copy)]
+pub struct VerifyPukProbe {
+    /// Which reference numbering names the unblock credential.
+    pub scheme: PinReferenceScheme,
+}
+
+impl VerifyPukProbe {
+    /// Lc for the empty-data probe form (S1 v4.2 §3.5.1.1).
+    const PROBE_LC: u8 = 0x00;
+
+    /// Serialise into the wire APDU (`00 20 00 <puk ref> 00`).
+    #[must_use]
+    pub fn into_apdu(self) -> CommandApdu {
+        CommandApdu::new(vec![
+            ApduClass::Plain.as_byte(),
+            Verify::INS,
+            VerifyMode::Verify.as_p1(),
+            self.scheme.puk_reference(),
+            Self::PROBE_LC,
+        ])
     }
 }
 
@@ -165,6 +201,8 @@ impl Verify {
 pub struct ChangeReferenceData {
     /// Which PIN slot the change targets.
     pub slot: PinSlot,
+    /// Which reference numbering maps the slot to its P2 byte.
+    pub scheme: PinReferenceScheme,
     /// Concatenation `current_padded || new_padded`.
     pub padded_pair: Vec<u8>,
 }
@@ -188,7 +226,13 @@ impl ChangeReferenceData {
             unreachable!("CHANGE REFERENCE DATA padded_pair exceeds short-form Lc")
         };
         let mut out = Vec::with_capacity(self.padded_pair.len().saturating_add(5));
-        out.extend_from_slice(&[Self::CLA, Self::INS, Self::P1, self.slot.p2_reference(), lc]);
+        out.extend_from_slice(&[
+            Self::CLA,
+            Self::INS,
+            Self::P1,
+            self.scheme.p2_reference(self.slot),
+            lc,
+        ]);
         out.extend_from_slice(&self.padded_pair);
         CommandApdu::new(out)
     }
@@ -413,6 +457,9 @@ pub struct ResetRetryCounter {
     /// Which PIN slot the unblock targets (the new PIN value
     /// replaces this slot's stored PIN).
     pub target_slot: PinSlot,
+    /// Which reference numbering maps the target slot to its P2
+    /// byte.
+    pub scheme: PinReferenceScheme,
     /// Concatenation `puk_padded || new_pin_padded`.
     pub padded_pair: Vec<u8>,
 }
@@ -439,7 +486,7 @@ impl ResetRetryCounter {
             Self::CLA,
             Self::INS,
             Self::P1,
-            self.target_slot.p2_reference(),
+            self.scheme.p2_reference(self.target_slot),
             lc,
         ]);
         out.extend_from_slice(&self.padded_pair);

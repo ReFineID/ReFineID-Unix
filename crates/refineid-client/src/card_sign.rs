@@ -1032,8 +1032,18 @@ fn sign_chain<T: CardTransport>(
     // VERIFY PIN only after the document and any visible identity have been
     // bound to this live card. A card swap or malformed appearance request
     // therefore cannot consume a PIN retry.
+    //
+    // The reference numbering is the card's to declare (citizen
+    // S1 v4.2 vs organizational S4-2 v4.0), resolved by
+    // counter-safe probes before the typed PIN is spent.
+    let scheme = transport
+        .resolve_pin_reference_scheme()
+        .map_err(|e| match e {
+            AuthError::Transport(t) => SignErrorKind::Transport(format!("{t}")),
+            AuthError::PinPolicy(reason) => SignErrorKind::PinPolicy { slot, reason },
+        })?;
     let outcome = transport
-        .verify_pin(slot.pin_slot(), options.pin.clone())
+        .verify_pin_with_scheme(slot.pin_slot(), scheme, options.pin.clone())
         .map_err(|e| match e {
             AuthError::Transport(t) => SignErrorKind::Transport(format!("{t}")),
             AuthError::PinPolicy(reason) => SignErrorKind::PinPolicy { slot, reason },

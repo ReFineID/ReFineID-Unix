@@ -53,8 +53,8 @@ struct CardCheckHelpers;
 
 use refineid_lib_core::apdu::status_word::StatusWord;
 use refineid_lib_core::auth::{
-    CredentialPolicyCounters, PinOps as _, PinSlot, PinStatus, PukStatus, UnblockingCounter,
-    UsageCounter,
+    CredentialPolicyCounters, PinOps as _, PinReferenceScheme, PinSlot, PinStatus, PukStatus,
+    UnblockingCounter, UsageCounter,
 };
 use refineid_lib_core::backend::{ReaderAccessCap, ReaderBackend as _, ReaderPickError};
 use refineid_lib_core::card_access::{CardAccess, CardAccessOps as _};
@@ -160,6 +160,10 @@ pub struct CardCheckReport {
     /// Order is `CertSlot::all()` iteration order; mandatory
     /// authentication-cert slot is always first.
     pub certs: Vec<CertReport>,
+    /// Which credential reference numbering the card answered to:
+    /// citizen (FINEID S1 v4.2 §3.5.2) or organizational
+    /// (FINEID S4-2 v4.0 §4.2), resolved by counter-safe probes.
+    pub pin_reference_scheme: PinReferenceScheme,
     /// PIN1 (authentication PIN) retry counter probe outcome.
     /// `None` when the counter-safe empty-Lc VERIFY didn't return
     /// a status word.
@@ -1184,6 +1188,9 @@ struct Pkcs15Section {
     token_info: TokenInfo,
     /// Every provisioned cert slot's DER.
     slot_ders: Vec<(CertSlot, CertDer)>,
+    /// Which credential reference numbering the card answered to
+    /// (citizen S1 v4.2 vs organizational S4-2 v4.0).
+    pin_reference_scheme: PinReferenceScheme,
     /// PIN1 status from the counter-safe probe.
     pin1: Option<PinStatus>,
     /// PIN2 status from the counter-safe probe.
@@ -1280,10 +1287,21 @@ fn read_pkcs15_section<T: refineid_lib_core::transport::CardTransport>(
     // make the next protected command fail with 6999, so PUK
     // and the DF.5016-only policy/changed probes stay disabled
     // on a secure channel.
-    let pin1 = transport.pin_status(PinSlot::Pin1).ok();
-    let pin2 = transport.pin_status(PinSlot::Pin2).ok();
+    // The reference numbering is the card's to declare: an
+    // organization card (FINEID S4-2 v4.0 §4.2) numbers its
+    // credentials by SDO identifier, not the citizen S1 v4.2
+    // references. Resolution is itself two counter-safe probes.
+    let pin_reference_scheme = transport
+        .resolve_pin_reference_scheme()
+        .unwrap_or(PinReferenceScheme::Citizen);
+    let pin1 = transport
+        .pin_status_with_scheme(PinSlot::Pin1, pin_reference_scheme)
+        .ok();
+    let pin2 = transport
+        .pin_status_with_scheme(PinSlot::Pin2, pin_reference_scheme)
+        .ok();
     let puk = (!secure_channel)
-        .then(|| transport.puk_status().ok())
+        .then(|| transport.puk_status_with_scheme(pin_reference_scheme).ok())
         .flatten();
     let pin1_policy = transport.pin_policy_counters(PinSlot::Pin1).ok().flatten();
     let pin2_policy = (!secure_channel)
@@ -1310,6 +1328,7 @@ fn read_pkcs15_section<T: refineid_lib_core::transport::CardTransport>(
     Ok(Pkcs15Section {
         token_info,
         slot_ders,
+        pin_reference_scheme,
         pin1,
         pin2,
         puk,
@@ -1455,6 +1474,7 @@ pub(crate) fn check_for_reader(
     let Pkcs15Section {
         token_info,
         slot_ders,
+        pin_reference_scheme,
         pin1,
         pin2,
         puk,
@@ -1513,6 +1533,7 @@ pub(crate) fn check_for_reader(
         token_info,
         card_access,
         certs,
+        pin_reference_scheme,
         pin1,
         pin2,
         puk,
@@ -2251,6 +2272,14 @@ impl CardCheckReport {
     /// never decrements the counter.
     fn fmt_pin_counters(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "=== PIN retry counters ===")?;
+        writeln!(
+            f,
+            "PIN references:           {}",
+            match self.pin_reference_scheme {
+                PinReferenceScheme::Citizen => "citizen (FINEID S1)",
+                PinReferenceScheme::Organizational => "organizational (FINEID S4-2)",
+            }
+        )?;
         writeln!(
             f,
             "PIN1 (auth):              {} (changed since manufacture: {}; usage: {}; unblocks: {})",
