@@ -33,7 +33,9 @@ use alloc::fmt;
 use std::path::PathBuf;
 
 use refineid_lib_core::apdu::status_word::StatusWord;
-use refineid_lib_core::auth::{AuthError, PinOps as _, PinPolicyReason, PinSlot, VerifyOutcome};
+use refineid_lib_core::auth::{
+    AuthError, PinOps as _, PinPolicyReason, PinReferenceScheme, PinSlot, VerifyOutcome,
+};
 use refineid_lib_core::backend::{
     ReaderAccessCap, ReaderBackend as _, ReaderBackendOps as _, ReaderPickError,
 };
@@ -758,6 +760,7 @@ impl From<ReaderPickError> for SignErrorKind {
 fn sign_dispatch_by_alg<T: CardTransport>(
     transport: &mut T,
     slot: SignSlot,
+    scheme: PinReferenceScheme,
     cert: &Certificate<'_>,
     cert_algorithm: PublicKeyAlgorithm,
     input_bytes: &[u8],
@@ -767,9 +770,18 @@ fn sign_dispatch_by_alg<T: CardTransport>(
         PublicKeyAlgorithm::Rsa { .. } => {
             let pubkey = extract_rsa_public_key(cert.spki.as_der())
                 .ok_or(SignErrorKind::UnsupportedKeyType(slot))?;
-            let signature = transport
-                .sign_pre_hashed_sha256_rsa(slot.key_ref(), input_sha256)
-                .map_err(sign_err_to_kind)?;
+            // The organizational platform has no external-hash
+            // PSO:HASH: the off-card digest rides in PSO:CDS's data
+            // field there (organizational cards specification
+            // §6.6.2.3).
+            let signature = match scheme {
+                PinReferenceScheme::Citizen => transport
+                    .sign_pre_hashed_sha256_rsa(slot.key_ref(), input_sha256)
+                    .map_err(sign_err_to_kind)?,
+                PinReferenceScheme::Organizational => transport
+                    .sign_pre_hashed_sha256_rsa_hash_in_command(slot.key_ref(), input_sha256)
+                    .map_err(sign_err_to_kind)?,
+            };
             let verify = match pubkey.verify_pkcs1v15_sha256(input_bytes, &signature) {
                 Ok(()) => LocalVerifyOutcome::Ok,
                 Err(e) => {
@@ -1076,6 +1088,7 @@ fn sign_chain<T: CardTransport>(
     let (signature_bytes, local_verify) = sign_dispatch_by_alg(
         transport,
         slot,
+        scheme,
         &cert_owned.view(),
         cert_algorithm,
         signed_octets,

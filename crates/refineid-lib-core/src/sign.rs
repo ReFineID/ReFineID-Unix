@@ -593,6 +593,43 @@ pub trait SignOps: CardTransport {
         Ok(sig)
     }
 
+    /// [`Self::sign_pre_hashed_sha256_rsa`] in the organizational
+    /// card's form: no PSO:HASH, the off-card digest rides in the
+    /// PSO:CDS data field (organizational cards specification
+    /// §6.6.2.3). The `MultiApp` external-hash DO answers `6A80` on
+    /// that platform, which is how the two forms tell apart.
+    ///
+    /// # Errors
+    /// As [`Self::sign_pre_hashed_sha256_rsa`].
+    fn sign_pre_hashed_sha256_rsa_hash_in_command(
+        &mut self,
+        key_ref: KeyRef,
+        hash: Sha256,
+    ) -> Result<Signature<RsaPkcs1Sha256>, SignError<TxError<Self>>>
+    where
+        Self: Sized,
+    {
+        self.mse_set_dst(commands::SignatureAlgRef::SHA256_RSA_PKCS1_V1_5, key_ref)?;
+        let apdu = commands::PsoComputeDigitalSignature {
+            class: ApduClass::Plain,
+        }
+        .into_apdu_with_hash(
+            hash.as_bytes(),
+            commands::PsoComputeDigitalSignature::LE_MAX_SHORT,
+        );
+        let r = self
+            .transmit(apdu.as_bytes())
+            .map_err(SignError::Transport)?;
+        if !r.is_ok() {
+            return Err(SignError::Sw("PSO:CDS", r.sw()));
+        }
+        let sig = Signature::<RsaPkcs1Sha256>::new(r.body);
+        if sig.len() != RSA_3072_SIG_BYTES {
+            return Err(SignError::UnexpectedSignatureLength(sig.len()));
+        }
+        Ok(sig)
+    }
+
     /// SHA-384 + ECDSA P-384 sign chain for FINEID Newer-scheme
     /// ECC keys (S4-1 v4.2 §4.2 auth key / qualified-signature
     /// ECC key, both `secp384r1`).

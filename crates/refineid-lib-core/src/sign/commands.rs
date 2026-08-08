@@ -995,6 +995,30 @@ impl PsoComputeDigitalSignature {
         ])
         .allow_wrong_le_retry()
     }
+
+    /// Serialise with the off-card hash in the data field.
+    ///
+    /// The Idemia organizational cards take the externally computed
+    /// hash directly in PSO:CDS (organizational cards specification
+    /// §6.6.2.3: Lc = hash length, Data = computed hash) -- their
+    /// PSO:HASH exists only for card-side hashing, so the FINEID v4
+    /// external-hash DO answers `6A80` there. Wire:
+    /// `<CLA> 2A 9E 9A <Lc> <hash> <Le>`.
+    #[must_use]
+    pub fn into_apdu_with_hash(self, hash: &[u8], le: u8) -> CommandApdu {
+        let Ok(lc) = u8::try_from(hash.len()) else {
+            unreachable!("PSO:CDS hash exceeds short-form Lc")
+        };
+        let mut out = Vec::with_capacity(hash.len().saturating_add(6));
+        out.push(self.class.as_byte());
+        out.push(Self::INS);
+        out.push(Self::P1);
+        out.push(Self::P2);
+        out.push(lc);
+        out.extend_from_slice(hash);
+        out.push(le);
+        CommandApdu::new(out).allow_wrong_le_retry()
+    }
 }
 
 #[cfg(test)]
